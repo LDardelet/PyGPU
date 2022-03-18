@@ -9,6 +9,8 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 from importlib import reload
+import Components
+reload(Components)
 
 matplotlib.use("TkAgg")
 
