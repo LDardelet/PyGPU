@@ -10,36 +10,17 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 
 from importlib import reload
 import Components
+import Values
 reload(Components)
+reload(Values)
+from Values import Colors, Params
 
 matplotlib.use("TkAgg")
 
-class Gui:
-    _FigSize = (7.,7.)
-    _DPI = 100
-    _PlotMargins = 0.00
-
-    _RefLineEvery = 20
-    _FullBoardSize = 1000
-
-    _Colors = {'default':'grey',
-               'build':'yellow',
-               'bg':'light grey',
-               'pressed':'grey'}
-
-    _MoveValues = {
-        "right":np.array([1,0]),
-        "left":np.array([-1,0]),
-        "up":np.array([0,1]),
-        "down":np.array([0,-1])
-    }
-    _Zooms = (100, 200, 50)
-    _Modes = {"escape":0,
-              'w':1}
+class GUI:
     def __init__(self):
         self.MainWindow = Tk.Tk()
         self.MainWindow.title('Logic Gates Simulator')
-        #self._Colors['bg'] = self.MainWindow.cget('bg')
 
         self._Images = {}
     
@@ -67,17 +48,20 @@ class Gui:
 
         self.DefineKeys()
 
-        self.Mode = 0
-        self.WireMode = 0
-
         self.MainWindow.mainloop()
 
     def LoadBoardData(self):
+        self.Mode = 0
+
         self.ComponentsLimits = np.array([[0,0], [0.,0]])
+        self.WireMap = WireMap()
+        Components.Wire.Map = self.WireMap
+
+        self.Components = []
         self.TmpComponents = []
 
     def SetMode(self, *args, **kwargs):
-        self.Mode = self._Modes[args[0]]
+        self.Mode = Params.GUI.Controls.Modes[args[0]]
         print(f"Mode {self.Mode}")
         self.ClearTmpComponent()
         if self.Mode == 1:
@@ -85,38 +69,36 @@ class Gui:
         self.UpdateModePlot()
 
     def StartWire(self):
-        pass
+        self.ClearTmpComponent()
+        self.TmpComponents.append(Components.Wire(self.Cursor))
 
     def ClearTmpComponent(self):
-        if self.TmpComponents:
-            pass
+        while self.TmpComponents:
+            self.TmpComponents.pop(0).destroy()
 
     def UpdateModePlot(self):
         if self.Mode == 0:
-            self.Plots['Cursor'].set_color(self._Colors['default'])
+            self.Plots['Cursor'].set_color(Colors.Components.default)
         else:
-            self.Plots['Cursor'].set_color(self._Colors['build'])
+            self.Plots['Cursor'].set_color(Colors.Components.build)
         self.DisplayFigure.canvas.draw()
 
     def OnMove(self, Symbol, Mod):
-        Move = self._MoveValues[Symbol]*10**(int(Mod == 1))
+        Move = Params.GUI.Controls.Moves[Symbol]*10**(int(Mod == 1))
         self.Cursor += Move
         self.UpdateCursor()
-        Displacement = np.maximum(0, self.Cursor + self.Margin - (self.LeftBotLoc + self.Size))
-        if Displacement.any():
-            self.LeftBotLoc += Displacement
-        else:
-            Displacement = np.maximum(0, self.LeftBotLoc - (self.Cursor - self.Margin))
-            if Displacement.any():
-                self.LeftBotLoc -= Displacement
-        self.SetBoardLimits()
+        self.CheckBoardLimits()
+
+        if self.Mode == 1:
+            self.TmpComponents[0].Drag(self.Cursor)
+
         self.DisplayFigure.canvas.draw()
 
     def SetDefaultView(self):
         print("Setting default view")
         self.Margin = 1
         if (self.ComponentsLimits == 0).all():
-            self.Size = self._Zooms[0]
+            self.Size = Params.GUI.Plots.Zooms[0]
         else:
             self.Size = max(100, (self.ComponentsLimits[:,1] - self.ComponentsLimits[:,0]).max())
         self.Cursor = self.ComponentsLimits.mean(axis = 0).astype(int)
@@ -127,30 +109,42 @@ class Gui:
         self.DisplayFigure.canvas.draw()
     def NextZoom(self):
         self.DisplayToolbar.children['!checkbutton2'].deselect()
-        if self.Size not in self._Zooms:
-            self.Size = self._Zooms[0]
+        if self.Size not in Params.GUI.Plots.Zooms:
+            self.Size = Params.GUI.Plots.Zooms[0]
         else:
-            self.Size = self._Zooms[(self._Zooms.index(self.Size)+1)%len(self._Zooms)]
+            self.Size = Params.GUI.Plots.Zooms[(Params.GUI.Plots.Zooms.index(self.Size)+1)%len(Params.GUI.Plots.Zooms)]
         self.LeftBotLoc = self.Cursor - (self.Size // 2)
         self.SetBoardLimits()
-        self.DisplayFigure.canvas.draw()
-
+        self.Draw()
         
     def UpdateCursor(self):
         self.Plots['Cursor'].set_data(*self.Cursor)
         self.MainFrame.Board.DisplayToolbar.CursorLabel['text'] = f"Cursor : {self.Cursor.tolist()}"
+    def CheckBoardLimits(self):
+        Displacement = np.maximum(0, self.Cursor + self.Margin - (self.LeftBotLoc + self.Size))
+        if Displacement.any():
+            self.LeftBotLoc += Displacement
+            self.SetBoardLimits()
+        else:
+            Displacement = np.maximum(0, self.LeftBotLoc - (self.Cursor - self.Margin))
+            if Displacement.any():
+                self.LeftBotLoc -= Displacement
+                self.SetBoardLimits()
     def SetBoardLimits(self):
         self.DisplayAx.set_xlim(self.LeftBotLoc[0],self.LeftBotLoc[0]+self.Size)
         self.DisplayAx.set_ylim(self.LeftBotLoc[1],self.LeftBotLoc[1]+self.Size)
 
     def DefineKeys(self):
+        Controls = Params.GUI.Controls
         self.KeysFuctionsDict = {
-            "f4":self.Close,
-            "r":lambda key, mod: self.Rotate(mod)
+            Controls.Close  :self.Close,
+            Controls.Rotate  :lambda key, mod: self.Rotate(mod),
+            Controls.Switch :self.Switch,
+            Controls.Set    :self.Set,
         }
-        for Key in self._MoveValues:
+        for Key in Controls.Moves:
             self.KeysFuctionsDict[Key] = self.OnMove
-        for Key in self._Modes:
+        for Key in Controls.Modes:
             self.KeysFuctionsDict[Key] = self.SetMode
 
         #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__))
@@ -169,17 +163,40 @@ class Gui:
         self._Images['RRImage'] = Tk.PhotoImage(file="./images/RotateRight.png").subsample(8)
         self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateRight", image=self._Images['RRImage'], height = 30, width = 30, command = lambda:self.Rotate(1))
 
-    def SetWireMode(self, mode):
-        self.WireButtons[mode].configure(background = self._Colors['pressed'])
-        self.WireButtons[1-mode].configure(background = self._Colors['bg'])
-        self.WireMode = mode
+    def SetWireMode(self, mode=None):
+        if mode is None:
+            mode = 1-Components.Wire.BuildMode
+        self.WireButtons[mode].configure(background = Colors.GUI.pressed)
+        self.WireButtons[1-mode].configure(background = Colors.GUI.bg)
+        Components.Wire.BuildMode = mode
+        if self.Mode == 1:
+            self.TmpComponents[0].Update()
+            self.Draw()
+
+    def Set(self, *args):
+        if self.Mode == 1:
+            self.AddComponent(self.TmpComponents.pop(0))
+            self.StartWire()
+
+    def Switch(self, *args):
+        if self.Mode == 1:
+            self.SetWireMode()
 
     def Rotate(self, var):
-        print(f"Rotate {var}")
+        for Component in self.TmpComponents:
+            Component.Rotate()
+        if self.TmpComponents:
+            self.Draw()
+
+    def AddComponent(self, Component):
+        Component.Fix(True)
+        self.Components.append(Component)
+
+        self.Draw()
 
     def LoadView(self):
-        self.DisplayFigure = matplotlib.figure.Figure(figsize=self._FigSize, dpi=self._DPI)
-        self.DisplayFigure.subplots_adjust(self._PlotMargins, self._PlotMargins, 1.-self._PlotMargins, 1.-self._PlotMargins)
+        self.DisplayFigure = matplotlib.figure.Figure(figsize=Params.GUI.Plots.FigSize, dpi=Params.GUI.Plots.DPI)
+        self.DisplayFigure.subplots_adjust(0., 0., 1., 1.)
         self.DisplayAx = self.DisplayFigure.add_subplot(111)
         self.DisplayAx.set_aspect("equal")
         self.DisplayAx.tick_params('both', left = False, bottom = False, labelleft = False, labelbottom = False)
@@ -187,19 +204,24 @@ class Gui:
 
         self.Plots = {}
 
-        self.Plots['Cursor'] = self.DisplayAx.plot(0,0, marker = 'o', color = self._Colors['default'])[0]
-        if self._RefLineEvery:
-            NLines = self._FullBoardSize // self._RefLineEvery
-            self.Plots['HLines']=[self.DisplayAx.plot([-self._FullBoardSize//2, self._FullBoardSize//2], 
-                                 [nLine*self._RefLineEvery, nLine*self._RefLineEvery], color = self._Colors['default'], alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
-            self.Plots['VLines']=[self.DisplayAx.plot([nLine*self._RefLineEvery, nLine*self._RefLineEvery], 
-                                 [-self._FullBoardSize//2, self._FullBoardSize//2], color = self._Colors['default'], alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
+        self.Plots['Cursor'] = self.DisplayAx.plot(0,0, marker = 'o', color = Colors.Components.default)[0]
+        RLE = Params.GUI.Plots.RefLineEvery
+        if RLE:
+            NLines = Params.Board.Size // RLE
+            self.Plots['HLines']=[self.DisplayAx.plot([-Params.Board.Size//2, Params.Board.Size//2], 
+                                 [nLine*RLE, nLine*RLE], color = Colors.Components.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
+            self.Plots['VLines']=[self.DisplayAx.plot([nLine*RLE, nLine*RLE], 
+                                 [-Params.Board.Size//2, Params.Board.Size//2], color = Colors.Components.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
 
         self.DisplayCanvas = matplotlib.backends.backend_tkagg.FigureCanvasTkAgg(self.DisplayFigure, self.MainFrame.Board.View.frame)
         self.DisplayCanvas.draw()
 
         self.MainFrame.Board.View.AdvertiseChild(self.DisplayCanvas.get_tk_widget(), "Plot")
         self.MainFrame.Board.View.Plot.grid(row = 0, column = 0)
+        Components.ComponentBase.Board = self.DisplayAx
+
+    def Draw(self):
+        self.DisplayFigure.canvas.draw()
 
     def LoadDisplayToolbar(self):
         self.MainFrame.Board.DisplayToolbar.AddFrame("Buttons", Side = Tk.TOP, Border = False)
@@ -228,6 +250,22 @@ class Gui:
 def Void(*args, **kwargs):
     pass
     #print(args[0])
+
+class WireMap:
+    def __init__(self):
+        self.MaxValue = 0
+        self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 8))
+
+    @property
+    def NewID(self):
+        return self.MaxValue+1
+
+    def Register(self, Locations, ID):
+        Values = self.Map[Locations[:,0], Locations[:,1], Locations[:,2]]
+        if (Values != 0).any():
+            return Locations[np.where(Values != 0), :2].tolist()
+        self.Map[Locations[:,0], Locations[:,1], Locations[:,2]] = ID
+        return []
 
 class SFrame:
     def __init__(self, frame, Name="Main", Side = None, NameDisplayed = False):
@@ -291,4 +329,4 @@ class SFrame:
             NewWidget.pack(side  = self.Side)
         return NewWidget
 
-G = Gui()
+G = GUI()
