@@ -78,17 +78,17 @@ class Wire(ComponentBase):
             P1, P2, P3 = self.Points
             (A1, A2), (D1, D2) = self.Angles
             if (P2 != P1).any():
+                RequestedLocations.append((P1[0], P1[1], A1+D1))
                 for x, y in np.linspace(P1, P2, abs(P2-P1).max()+1, dtype = int)[1:-1]:
                     RequestedLocations.append((x,y,A1))
-                    RequestedLocations.append((x,y,A1-4))
-                RequestedLocations.append((P1[0], P1[1], A1+D1))
-                RequestedLocations.append((P2[0], P2[1], A1+D1-4))
+                    RequestedLocations.append((x,y,A1+4))
+                RequestedLocations.append((P2[0], P2[1], (A1+D1+4)%8))
             if (P3 != P2).any():
+                RequestedLocations.append((P2[0], P2[1], A2+D2))
                 for x, y in np.linspace(P2, P3, abs(P3-P2).max()+1, dtype = int)[1:-1]:
                     RequestedLocations.append((x,y,A2))
-                    RequestedLocations.append((x,y,A2-4))
-                RequestedLocations.append((P2[0], P2[1], A2+D2))
-                RequestedLocations.append((P3[0], P3[1], A2+D2-4))
+                    RequestedLocations.append((x,y,A2+4))
+                RequestedLocations.append((P3[0], P3[1], (A2+D2+4)%8))
 
             Errors = self.Map.Register(np.array(RequestedLocations), self.ID)
             if not Errors:

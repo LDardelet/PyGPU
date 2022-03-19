@@ -261,7 +261,7 @@ def Void(*args, **kwargs):
 class WireMap:
     def __init__(self):
         self.MaxValue = 0
-        self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 8))
+        self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 9))
 
     @property
     def NewID(self):
