@@ -1,4 +1,4 @@
 python3 GUI.py
-if [ $? -eq 1 ]; then 
+if [ $? -eq 5 ]; then 
 	./gui.sh
 fi

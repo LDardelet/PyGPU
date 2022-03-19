@@ -12,6 +12,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from importlib import reload
 import Components
 import Values
+import Console
 reload(Components)
 reload(Values)
 from Values import Colors, Params
@@ -30,7 +31,7 @@ class GUI:
         self.MainFrame.AddFrame("Components", 1, 0, Side = Tk.TOP)
         self.MainFrame.AddFrame("Board", 1, 1, Side = Tk.TOP)
         self.MainFrame.AddFrame("Parameters", 1, 2, Side = Tk.TOP)
-        self.MainFrame.AddFrame("Console", 2, 0, columnspan = 3)
+        self.MainFrame.AddFrame("Console", 2, 0, columnspan = 3, Side = Tk.LEFT)
 
         self.MainFrame.Components.AddFrame("I/O", Side = Tk.TOP, NameDisplayed = True)
         self.MainFrame.Components.AddFrame("Basic Gates", Side = Tk.TOP, NameDisplayed = True)
@@ -45,6 +46,7 @@ class GUI:
         self.LoadControls()
         self.LoadView()
         self.LoadDisplayToolbar()
+        self.LoadConsole()
         self.SetDefaultView()
 
         self.DefineKeys()
@@ -52,21 +54,24 @@ class GUI:
         self.MainWindow.mainloop()
 
     def LoadBoardData(self):
-        self.Mode = 0
+        self.Mode = Params.GUI.Modes.Default
 
-        self.ComponentsLimits = np.array([[0,0], [0.,0]])
-        self.WireMap = WireMap()
-        Components.Wire.Map = self.WireMap
+        self.ComponentsHandler = ComponentsHandler()
+        Components.ComponentBase.Handler = self.ComponentsHandler
 
-        self.Components = []
         self.TmpComponents = []
 
     def SetMode(self, *args, **kwargs):
         self.Mode = Params.GUI.Controls.Modes[args[0]]
-        print(f"Mode {self.Mode}")
+        print(f"Mode {Params.GUI.ModesNames[self.Mode]}")
         self.ClearTmpComponent()
-        if self.Mode == 1:
+        if self.Mode == Params.GUI.Modes.Wire:
             self.StartWire()
+        if self.Mode == Params.GUI.Modes.Console:
+            self.MainFrame.Console.Console.text.focus_set()
+            self.MainFrame.Console.Console.text.see(Tk.END)
+        else:
+            self.MainWindow.focus_set()
         self.UpdateModePlot()
 
     def StartWire(self):
@@ -78,19 +83,21 @@ class GUI:
             self.TmpComponents.pop(0).destroy()
 
     def UpdateModePlot(self):
-        if self.Mode == 0:
+        if self.Mode == Params.GUI.Modes.Default or self.Mode == Params.GUI.Modes.Console:
             self.Plots['Cursor'].set_color(Colors.Components.default)
         else:
             self.Plots['Cursor'].set_color(Colors.Components.build)
         self.DisplayFigure.canvas.draw()
 
     def OnMove(self, Symbol, Mod):
+        if self.Mode == Params.GUI.Modes.Console:
+            return
         Move = Params.GUI.Controls.Moves[Symbol]*10**(int(Mod == 1))
         self.Cursor += Move
         self.UpdateCursor()
         self.CheckBoardLimits()
 
-        if self.Mode == 1:
+        if self.Mode == Params.GUI.Modes.Wire:
             self.TmpComponents[0].Drag(self.Cursor)
 
         self.DisplayFigure.canvas.draw()
@@ -98,11 +105,11 @@ class GUI:
     def SetDefaultView(self):
         print("Setting default view")
         self.Margin = 1
-        if (self.ComponentsLimits == 0).all():
+        if (self.ComponentsHandler.ComponentsLimits == 0).all():
             self.Size = Params.GUI.Plots.Zooms[0]
         else:
-            self.Size = max(100, (self.ComponentsLimits[:,1] - self.ComponentsLimits[:,0]).max())
-        self.Cursor = self.ComponentsLimits.mean(axis = 0).astype(int)
+            self.Size = max(100, (self.ComponentsHandler.ComponentsLimits[:,1] - self.ComponentsHandler.ComponentsLimits[:,0]).max())
+        self.Cursor = self.ComponentsHandler.ComponentsLimits.mean(axis = 0).astype(int)
         self.LeftBotLoc = self.Cursor - (self.Size // 2)
         
         self.SetBoardLimits()
@@ -149,8 +156,13 @@ class GUI:
         for Key in Controls.Modes:
             self.KeysFuctionsDict[Key] = self.SetMode
 
+        self.MainWindow.bind('<Key>', lambda e: self.ConsoleFilter(self.KeysFuctionsDict.get(e.keysym.lower(), Void), e.keysym.lower(), e.state))
         #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__))
-        self.MainWindow.bind('<Key>', lambda e: self.KeysFuctionsDict.get(e.keysym.lower(), Void)(e.keysym.lower(), e.state))
+
+    def ConsoleFilter(self, Callback, Symbol, Modifier):
+        if self.Mode == Params.GUI.Modes.Console and not Symbol in ('escape', 'f4', 'f5'): # Hardcoded so far, should be taken from Params as well
+            return
+        Callback(Symbol, Modifier)
 
     def LoadControls(self):
         self._Images['WSImage'] = Tk.PhotoImage(file="./images/WireStraight.png")
@@ -171,18 +183,19 @@ class GUI:
         self.WireButtons[mode].configure(background = Colors.GUI.pressed)
         self.WireButtons[1-mode].configure(background = Colors.GUI.bg)
         Components.Wire.BuildMode = mode
-        if self.Mode == 1:
+        if self.Mode == Params.GUI.Modes.Wire:
             self.TmpComponents[0].Update()
             self.Draw()
 
     def Set(self, *args):
-        if self.Mode == 1:
-            if self.AddComponent(self.TmpComponents[0]):
+        if self.Mode == Params.GUI.Modes.Wire:
+            if self.TmpComponents[0].Fix(True):
                 self.TmpComponents.pop(0)
                 self.StartWire()
+                self.Draw()
 
     def Switch(self, *args):
-        if self.Mode == 1:
+        if self.Mode == Params.GUI.Modes.Wire:
             self.SetWireMode()
 
     def Rotate(self, var):
@@ -190,14 +203,6 @@ class GUI:
             Component.Rotate()
         if self.TmpComponents:
             self.Draw()
-
-    def AddComponent(self, Component):
-        if Component.Fix(True):
-            self.Components.append(Component)
-            self.Draw()
-            return True
-        else:
-            return False
 
     def LoadView(self):
         self.DisplayFigure = matplotlib.figure.Figure(figsize=Params.GUI.Plots.FigSize, dpi=Params.GUI.Plots.DPI)
@@ -249,6 +254,13 @@ class GUI:
         self.DisplayToolbar.update()
         self.MainFrame.Board.DisplayToolbar.AddWidget(Tk.Label, "CursorLabel", text = "")
 
+    def LoadConsole(self):
+        #self.MainFrame.Console.AddWidget(Console.ConsoleWidget, "Console", _locals=locals(), exit_callback=self.MainWindow.destroy)
+        ConsoleInstance = Console.ConsoleWidget(self.MainFrame.Console.frame, locals(), self.MainWindow.destroy)
+        ConsoleInstance.pack(fill=Tk.BOTH, expand=True)
+        self.MainFrame.Console.RemoveDefaultName()
+        self.MainFrame.Console.AdvertiseChild(ConsoleInstance, "Console")
+
     def Close(self, Restart = False):
         self.MainWindow.quit()
         self.Restart = Restart
@@ -258,21 +270,34 @@ def Void(*args, **kwargs):
     pass
     #print(args[0])
 
-class WireMap:
+class ComponentsHandler:
     def __init__(self):
         self.MaxValue = 0
+        self.Dict = {}
+        self.ComponentsLimits = np.array([[0,0], [0.,0]])
         self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 9))
 
     @property
     def NewID(self):
         return self.MaxValue+1
 
-    def Register(self, Locations, ID):
+    def Register(self, Locations, Component):
         Values = self.Map[Locations[:,0], Locations[:,1], Locations[:,2]]
         if (Values != 0).any():
-            return Locations[np.where(Values != 0), :2].tolist()
-        self.Map[Locations[:,0], Locations[:,1], Locations[:,2]] = ID
-        return []
+            print(f"Unable to register the new wire, due to positions {Locations[np.where(Values != 0), :2].tolist()}")
+            return False
+        self.SetID(Component)
+        if Component.ID is None:
+            print("No component ID given yet")
+            return False
+        self.Map[Locations[:,0], Locations[:,1], Locations[:,2]] = Component.ID
+        return True
+
+    def SetID(self, Component): # Sets the ID of a component, depending on its type and location
+        if Component.__class__ != Components.Wire:
+            Component.ID = self.NewID
+        else:
+            pass
 
 class SFrame:
     def __init__(self, frame, Name="Main", Side = None, NameDisplayed = False):
@@ -286,7 +311,8 @@ class SFrame:
         if Name in self.Children:
             raise Exception("Frame name already taken")
         self.Children[Name] = NewChild
-        self.__dict__[Name] = NewChild
+        if Name != 'Name':
+            self.__dict__[Name] = NewChild
 
     def AddFrame(self, Name, row=None, column=None, Side = None, Sticky = True, Border = True, NameDisplayed = False, **kwargs):
         self.RemoveDefaultName()
@@ -317,7 +343,6 @@ class SFrame:
         if "Name" in self.Children and not self.NameDisplayed:
             self.Children["Name"].destroy()
             del self.Children["Name"]
-            del self.__dict__["Name"]
 
     def AddWidget(self, WidgetClass, Name, row=None, column=None, **kwargs):
         self.RemoveDefaultName()
@@ -337,4 +362,7 @@ class SFrame:
 
 if __name__ == '__main__':
     G = GUI()
-    sys.exit(G.Restart)
+    if G.Restart:
+        sys.exit(5)
+    else:
+        sys.exit(0)

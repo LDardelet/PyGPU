@@ -6,12 +6,15 @@ from Values import Colors, Params
 
 class ComponentBase:
     Board = None
+    Handler = None
     def __init__(self, Location):
         self.Location = Location
         self.Rotation = 0
         self.Highlight = False
         self.Fixed = False
         self.Plots = []
+
+        self.ID = None
 
     def plot(self, *args, **kwargs):
         self.Plots += self.Board.plot(*args, **kwargs)
@@ -50,13 +53,11 @@ class ComponentBase:
             plot.remove()
 
 class Wire(ComponentBase):
-    Map = None
     Params = Params.Wire
     BuildMode = Params.DefaultBuildMode
     def __init__(self, StartLocation, EndLocation = None):
         ComponentBase.__init__(self, StartLocation)
 
-        self.ID = self.Map.NewID + 1
 
         self.Points = np.zeros((3,2), dtype = int)
         self.plot(self.Points[:2,0], self.Points[:2,1], color = Colors.Components.build, linewidth = self.Params.Width)
@@ -64,13 +65,11 @@ class Wire(ComponentBase):
         self.Points[0,:] = StartLocation
         if EndLocation is None:
             self.Points[2,:] = StartLocation
-            self.Built = False
         else:
             self.Points[2,:] = EndLocation
-            self.Built = True
         self.Update()
-        if self.Built:
-            self.Fix(var = 1)
+
+        self.Value = None
 
     def Fix(self, var):
         if var:
@@ -90,13 +89,10 @@ class Wire(ComponentBase):
                     RequestedLocations.append((x,y,A2+4))
                 RequestedLocations.append((P3[0], P3[1], (A2+D2+4)%8))
 
-            Errors = self.Map.Register(np.array(RequestedLocations), self.ID)
-            if not Errors:
-                self.Built = True
+            if self.Handler.Register(np.array(RequestedLocations), self):
                 ComponentBase.Fix(self, True)
                 return True
             else:
-                print(f"Unable to register the new wire, due to positions {Errors}")
                 return False
 
     def Update(self):
@@ -143,3 +139,10 @@ class Wire(ComponentBase):
     def Drag(self, Cursor):
         self.Points[2,:] = Cursor
         self.Update()
+
+class Connexion(ComponentBase):
+    def __init__(self, Location):
+        self.Location = Location
+        self.Links = np.unique(self.Handler.Map[self.Location[0], self.Location[1], :-1])
+        
+        self.plot(self.Location[0], self.Location[1], Colors.Components.fixed)

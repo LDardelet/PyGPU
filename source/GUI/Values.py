@@ -5,6 +5,8 @@ class Colors:
         default = 'grey'
         build = 'yellow'
         fixed = 'white'
+        on = 'green'
+        off = 'red'
     class GUI:
         bg = 'light grey'
         pressed = 'grey'
@@ -16,6 +18,14 @@ class Params:
         Width = 1
         DefaultBuildMode = 0
     class GUI:
+        class Modes:
+            Default = 0
+            Wire = 1
+            Console = 2
+        ModesNames = {0:"Default",
+                      1: "Wire",
+                      2: "Console"
+        }
         class Plots:
             FigSize = (7.,7.)
             DPI = 100
@@ -30,10 +40,14 @@ class Params:
                 "down":np.array([0,-1])
             }
             Modes = {"escape":0,
-                'w':1
+                     'w':1,
+                     'return':2
             }
             Close = 'f4'
             Restart = 'f5'
             Rotate = 'r'
             Switch = 'a'
             Set = 'space'
+        class Console:
+            Height = 9
+            Width = 120
