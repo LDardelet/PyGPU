@@ -33,6 +33,7 @@ class Params:
                 'w':1
             }
             Close = 'f4'
+            Restart = 'f5'
             Rotate = 'r'
             Switch = 'a'
             Set = 'space'

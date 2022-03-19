@@ -2,6 +2,7 @@ import tkinter as Tk
 from tkinter import ttk
 from PIL import Image
 import os
+import sys
 import numpy as np
 
 import matplotlib
@@ -137,8 +138,9 @@ class GUI:
     def DefineKeys(self):
         Controls = Params.GUI.Controls
         self.KeysFuctionsDict = {
-            Controls.Close  :self.Close,
-            Controls.Rotate  :lambda key, mod: self.Rotate(mod),
+            Controls.Close  :lambda key, mod: self.Close(0),
+            Controls.Restart:lambda key, mod: self.Close(1),
+            Controls.Rotate :lambda key, mod: self.Rotate(mod),
             Controls.Switch :self.Switch,
             Controls.Set    :self.Set,
         }
@@ -175,8 +177,9 @@ class GUI:
 
     def Set(self, *args):
         if self.Mode == 1:
-            self.AddComponent(self.TmpComponents.pop(0))
-            self.StartWire()
+            if self.AddComponent(self.TmpComponents[0]):
+                self.TmpComponents.pop(0)
+                self.StartWire()
 
     def Switch(self, *args):
         if self.Mode == 1:
@@ -189,10 +192,12 @@ class GUI:
             self.Draw()
 
     def AddComponent(self, Component):
-        Component.Fix(True)
-        self.Components.append(Component)
-
-        self.Draw()
+        if Component.Fix(True):
+            self.Components.append(Component)
+            self.Draw()
+            return True
+        else:
+            return False
 
     def LoadView(self):
         self.DisplayFigure = matplotlib.figure.Figure(figsize=Params.GUI.Plots.FigSize, dpi=Params.GUI.Plots.DPI)
@@ -225,6 +230,7 @@ class GUI:
 
     def LoadDisplayToolbar(self):
         self.MainFrame.Board.DisplayToolbar.AddFrame("Buttons", Side = Tk.TOP, Border = False)
+        self.MainFrame.Board.DisplayToolbar.Buttons.RemoveDefaultName()
         self.DisplayToolbar = NavigationToolbar2Tk(self.DisplayCanvas, self.MainFrame.Board.DisplayToolbar.Buttons.frame)
         NewCommands = {'!button':self.SetDefaultView, # Remap Home button
                        '!checkbutton2':self.NextZoom # Remap zoom button
@@ -243,8 +249,9 @@ class GUI:
         self.DisplayToolbar.update()
         self.MainFrame.Board.DisplayToolbar.AddWidget(Tk.Label, "CursorLabel", text = "")
 
-    def Close(self, *args):
+    def Close(self, Restart = False):
         self.MainWindow.quit()
+        self.Restart = Restart
         #self.MainWindow.destroy()
 
 def Void(*args, **kwargs):
@@ -282,10 +289,7 @@ class SFrame:
         self.__dict__[Name] = NewChild
 
     def AddFrame(self, Name, row=None, column=None, Side = None, Sticky = True, Border = True, NameDisplayed = False, **kwargs):
-        if "Name" in self.Children and not self.NameDisplayed:
-            self.Children["Name"].destroy()
-            del self.Children["Name"]
-            del self.__dict__["Name"]
+        self.RemoveDefaultName()
 
         if Name in self.Children:
             raise Exception("Frame name already taken")
@@ -307,14 +311,16 @@ class SFrame:
             if Sticky:
                 kwargs["fill"] = Tk.BOTH
             NewFrame.frame.pack(side = self.Side, **kwargs)
-        if NameDisplayed:
-            NewFrame.AddWidget(Tk.Label, "Name", 0, 0, text = Name)
+        NewFrame.AddWidget(Tk.Label, "Name", 0, 0, text = Name)
 
-    def AddWidget(self, WidgetClass, Name, row=None, column=None, **kwargs):
+    def RemoveDefaultName(self):
         if "Name" in self.Children and not self.NameDisplayed:
-            self.Children['Name'].destroy()
+            self.Children["Name"].destroy()
             del self.Children["Name"]
             del self.__dict__["Name"]
+
+    def AddWidget(self, WidgetClass, Name, row=None, column=None, **kwargs):
+        self.RemoveDefaultName()
 
         if Name in self.Children:
             raise Exception("Widget name already taken")
@@ -329,4 +335,6 @@ class SFrame:
             NewWidget.pack(side  = self.Side)
         return NewWidget
 
-G = GUI()
+if __name__ == '__main__':
+    G = GUI()
+    sys.exit(G.Restart)

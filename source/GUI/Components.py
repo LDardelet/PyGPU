@@ -94,8 +94,10 @@ class Wire(ComponentBase):
             if not Errors:
                 self.Built = True
                 ComponentBase.Fix(self, True)
+                return True
             else:
                 print(f"Unable to register the new wire, due to positions {Errors}")
+                return False
 
     def Update(self):
         if self.BuildMode == 0: # Straight wires
