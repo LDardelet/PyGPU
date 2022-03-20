@@ -78,6 +78,9 @@ class ConsoleWidget(tk.Frame):
         # write to console
         str_data = str_io.getvalue()
         if str_data:
+            #if str_data[0] == '#':
+            #    kwargs['foreground'] = {'r':'red', 'g':'green', 'o':'orange', 'k':'black'}[str_data[1]]
+            #    str_data = str_data[2:]
             self.text.write(str_data, tag_name, "prompt_end", **kwargs)
 
         # loop
@@ -128,6 +131,14 @@ class ConsoleWidget(tk.Frame):
 
             threading.Thread(target=run_command).start()
 
+def Log(text):
+    print(text)
+def LogSuccess(text):
+    print('Done : '+text)
+def LogWarning(text):
+    print('Warning : '+text)
+def LogError(text):
+    print('Error : '+text)
 
 class ConsoleText(ScrolledText):
     """

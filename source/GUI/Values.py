@@ -11,6 +11,9 @@ class Colors:
         bg = 'light grey'
         pressed = 'grey'
 
+class Markers:
+    Connexion = 'o'
+
 class Params:
     class Board:
         Size = 1000
@@ -26,12 +29,13 @@ class Params:
                       1: "Wire",
                       2: "Console"
         }
-        class Plots:
+        class View:
             FigSize = (7.,7.)
             DPI = 100
             Zooms = (100, 200, 50)
 
             RefLineEvery = 20
+            CursorLinesWidth = 1
         class Controls:
             Moves = {
                 "right":np.array([1,0]),
@@ -41,7 +45,7 @@ class Params:
             }
             Modes = {"escape":0,
                      'w':1,
-                     'return':2
+                     'twosuperior':2
             }
             Close = 'f4'
             Restart = 'f5'
@@ -51,3 +55,5 @@ class Params:
         class Console:
             Height = 9
             Width = 120
+
+Params.Board.Max = Params.Board.Size // 2

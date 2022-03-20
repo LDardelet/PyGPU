@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from importlib import reload
-from Values import Colors, Params
+from Values import Colors, Markers, Params
 
 class ComponentBase:
     Board = None
@@ -52,12 +52,14 @@ class ComponentBase:
         for plot in self.Plots:
             plot.remove()
 
+    def __repr__(self):
+        return f"{self.__class__.__name__} at {self.Location}"
+
 class Wire(ComponentBase):
     Params = Params.Wire
     BuildMode = Params.DefaultBuildMode
     def __init__(self, StartLocation, EndLocation = None):
         ComponentBase.__init__(self, StartLocation)
-
 
         self.Points = np.zeros((3,2), dtype = int)
         self.plot(self.Points[:2,0], self.Points[:2,1], color = Colors.Components.build, linewidth = self.Params.Width)
@@ -70,6 +72,8 @@ class Wire(ComponentBase):
         self.Update()
 
         self.Value = None
+        self.Connects = set()
+        self.AdvertisedLocations = []
 
     def Fix(self, var):
         if var:
@@ -91,6 +95,7 @@ class Wire(ComponentBase):
 
             if self.Handler.Register(np.array(RequestedLocations), self):
                 ComponentBase.Fix(self, True)
+                self.AdvertisedLocations = RequestedLocations
                 return True
             else:
                 return False
@@ -141,8 +146,27 @@ class Wire(ComponentBase):
         self.Update()
 
 class Connexion(ComponentBase):
-    def __init__(self, Location):
-        self.Location = Location
-        self.Links = np.unique(self.Handler.Map[self.Location[0], self.Location[1], :-1])
+    def __init__(self, Location, Column):
+        ComponentBase.__init__(self, Location)
+        self.Fixed = True
+
+        self.IDs = set(Column[:8]) # Set to avoid unnecessary storage
+        self.Wires = (Column[:8] > 0).sum()
         
-        self.plot(self.Location[0], self.Location[1], Colors.Components.fixed)
+        self.plot(self.Location[0], self.Location[1], marker = Markers.Connexion, color = Colors.Components.fixed)
+        self.CheckDisplay()
+
+    def Update(self, Column):
+        self.IDs = set(Column[:8])
+        self.Wires = (Column[:8] > 0).sum()
+        self.CheckDisplay()
+
+    def CheckDisplay(self):
+        if self.Wires >= 3:
+            self.Plots[0].set_alpha(1.)
+        else:
+            self.Plots[0].set_alpha(0.)
+
+    @property
+    def Displayed(self):
+        return self.Wires >= 3
