@@ -8,11 +8,16 @@ class ComponentBase:
     Board = None
     Handler = None
     def __init__(self, Location):
-        self.Location = Location
+        self.CName = None
+
+        self.Location = np.array(Location)
         self.Rotation = 0
         self.Highlight = False
         self.Fixed = False
         self.Plots = []
+
+        self.AdvertisedLocations = set()
+        self.Links = set()
 
         self.ID = None
 
@@ -41,10 +46,17 @@ class ComponentBase:
             for Plot in self.Plots:
                 Plot.set_color(Colors.Components.build)
 
+    def LinkedTo(self, ID):
+        return ID in self.Links
+
+    def Drag(self, Cursor):
+        pass
+
     def Rotate(self):
         self.Rotation += 1
         self.Update()
 
+    @property
     def Extent(self):
         pass
 
@@ -58,6 +70,7 @@ class ComponentBase:
 class Wire(ComponentBase):
     Params = Params.Wire
     BuildMode = Params.DefaultBuildMode
+    CName = "Wire"
     def __init__(self, StartLocation, EndLocation = None):
         ComponentBase.__init__(self, StartLocation)
 
@@ -73,7 +86,6 @@ class Wire(ComponentBase):
 
         self.Value = None
         self.Connects = set()
-        self.AdvertisedLocations = []
 
     def Fix(self, var):
         if var:
@@ -93,9 +105,8 @@ class Wire(ComponentBase):
                     RequestedLocations.append((x,y,A2+4))
                 RequestedLocations.append((P3[0], P3[1], (A2+D2+4)%8))
 
-            if self.Handler.Register(np.array(RequestedLocations), self):
+            if self.Handler.Register(np.array(RequestedLocations), self, (self.Points[0,:2], self.Points[2,:2])):
                 ComponentBase.Fix(self, True)
-                self.AdvertisedLocations = RequestedLocations
                 return True
             else:
                 return False
@@ -146,27 +157,28 @@ class Wire(ComponentBase):
         self.Update()
 
 class Connexion(ComponentBase):
-    def __init__(self, Location, Column):
+    CName = "Connexion"
+    def __init__(self, Location, Column): # Warning : 0 is stored in sets, to avoid many checks.
         ComponentBase.__init__(self, Location)
         self.Fixed = True
 
         self.IDs = set(Column[:8]) # Set to avoid unnecessary storage
-        self.Wires = (Column[:8] > 0).sum()
+        self.NWires = (Column[:8] > 0).sum()
         
         self.plot(self.Location[0], self.Location[1], marker = Markers.Connexion, color = Colors.Components.fixed)
         self.CheckDisplay()
 
     def Update(self, Column):
         self.IDs = set(Column[:8])
-        self.Wires = (Column[:8] > 0).sum()
+        self.NWires = (Column[:8] > 0).sum()
         self.CheckDisplay()
 
     def CheckDisplay(self):
-        if self.Wires >= 3:
+        if self.NWires >= 3:
             self.Plots[0].set_alpha(1.)
         else:
             self.Plots[0].set_alpha(0.)
 
     @property
     def Displayed(self):
-        return self.Wires >= 3
+        return self.NWires >= 3

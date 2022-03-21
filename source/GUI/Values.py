@@ -52,8 +52,13 @@ class Params:
             Rotate = 'r'
             Switch = 'a'
             Set = 'space'
+            Connect = 'c'
         class Console:
             Height = 9
             Width = 120
+        class Behaviour:
+            AutoStartWire = False
+            AutoContinueWire = True
+            StopWireOnJoin = True
 
 Params.Board.Max = Params.Board.Size // 2

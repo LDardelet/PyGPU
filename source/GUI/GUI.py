@@ -9,13 +9,9 @@ import matplotlib
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
-from importlib import reload
-import Components
-import Values
 from Console import ConsoleWidget, Log, LogSuccess, LogWarning, LogError
-reload(Components)
-reload(Values)
 from Values import Colors, Params
+import Circuit
 
 matplotlib.use("TkAgg")
 
@@ -56,8 +52,8 @@ class GUI:
     def LoadBoardData(self):
         self.Mode = Params.GUI.Modes.Default
 
-        self.ComponentsHandler = ComponentsHandler()
-        Components.ComponentBase.Handler = self.ComponentsHandler
+        self.ComponentsHandler = Circuit.ComponentsHandler()
+        Circuit.Components.ComponentBase.Handler = self.ComponentsHandler
 
         self.TmpComponents = []
 
@@ -67,7 +63,10 @@ class GUI:
             Log(f"Mode {Params.GUI.ModesNames[self.Mode]}")
         self.ClearTmpComponent()
         if self.Mode == Params.GUI.Modes.Wire:
-            self.StartWire()
+            if Params.GUI.Behaviour.AutoStartWire:
+                self.StartWire()
+            if not Change:
+                return
         if self.Mode == Params.GUI.Modes.Console:
             self.MainFrame.Console.ConsoleInstance.text.see(Tk.END)
             if Change:
@@ -77,12 +76,12 @@ class GUI:
         if self.Mode == Params.GUI.Modes.Default:
             self.CheckConnexionAvailable()
         else:
-            self.MainFrame.Board.Controls.Dot.configure(state = Tk.DISABLED)
+            self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.DISABLED)
         self.UpdateModePlot()
 
     def StartWire(self):
         self.ClearTmpComponent()
-        self.TmpComponents.append(Components.Wire(self.Cursor))
+        self.TmpComponents.append(Circuit.Components.Wire(self.Cursor))
 
     def ClearTmpComponent(self):
         while self.TmpComponents:
@@ -115,8 +114,8 @@ class GUI:
     def OnMove(self):
         self.UpdateCursor()
         self.CheckBoardLimits()
-        if self.Mode == Params.GUI.Modes.Wire:
-            self.TmpComponents[0].Drag(self.Cursor)
+        for Component in self.TmpComponents:
+            Component.Drag(self.Cursor)
         if self.Mode == Params.GUI.Modes.Default:
             self.CheckConnexionAvailable()
         self.DisplayFigure.canvas.draw()
@@ -124,9 +123,9 @@ class GUI:
     def CheckConnexionAvailable(self):
         Column = self.ComponentsHandler.Map[self.Cursor[0], self.Cursor[1], :]
         if not Column[-1] and (Column[:-1] != 0).sum() > 3:
-            self.MainFrame.Board.Controls.Dot.configure(state = Tk.NORMAL)
+            self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.NORMAL)
         else:
-            self.MainFrame.Board.Controls.Dot.configure(state = Tk.DISABLED)
+            self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.DISABLED)
 
     def SetDefaultView(self):
         Log("Setting default view")
@@ -156,7 +155,9 @@ class GUI:
         if Params.GUI.View.CursorLinesWidth:
             self.Plots['HCursor'].set_data([-Params.Board.Max, Params.Board.Max], [self.Cursor[1], self.Cursor[1]])
             self.Plots['VCursor'].set_data([self.Cursor[0], self.Cursor[0]], [-Params.Board.Max, Params.Board.Max])
-        self.MainFrame.Board.DisplayToolbar.CursorLabel['text'] = f"Cursor : {self.Cursor.tolist()}"
+        self.MainFrame.Board.DisplayToolbar.Labels.CursorLabel['text'] = f"Cursor : {self.Cursor.tolist()}"
+        self.MainFrame.Board.DisplayToolbar.Labels.ComponentLabel['text'] = self.ComponentsHandler.Repr(self.Cursor)
+
     def CheckBoardLimits(self):
         Displacement = np.maximum(0, self.Cursor + self.Margin - (self.LeftBotLoc + self.Size))
         if Displacement.any():
@@ -179,6 +180,7 @@ class GUI:
             Controls.Rotate :lambda key, mod: self.Rotate(mod),
             Controls.Switch :lambda key, mod: self.Switch(),
             Controls.Set    :lambda key, mod: self.Set(),
+            Controls.Connect:lambda key, mod: self._ToggleConnexion(),
         }
         for Key in Controls.Moves:
             self.KeysFuctionsDict[Key] = lambda key, mod: self.OnKeyMove(Params.GUI.Controls.Moves[key], mod)
@@ -201,7 +203,7 @@ class GUI:
         self.WireButtons = (self.MainFrame.Board.Controls.WireStraight, self.MainFrame.Board.Controls.WireDiagonal)
         self.SetWireMode(0)
         self._Images['DotImage'] = Tk.PhotoImage(file="./images/Dot.png").subsample(10)
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "Dot", image=self._Images['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self.PlaceDot())
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexion", image=self._Images['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self._ToggleConnexion())
 
         self.MainFrame.Board.Controls.AddWidget(ttk.Separator, orient = 'vertical')
 
@@ -212,18 +214,24 @@ class GUI:
 
     def SetWireMode(self, mode=None):
         if mode is None:
-            mode = 1-Components.Wire.BuildMode
+            mode = 1-Circuit.Components.Wire.BuildMode
         self.WireButtons[mode].configure(background = Colors.GUI.pressed)
         self.WireButtons[1-mode].configure(background = Colors.GUI.bg)
-        Components.Wire.BuildMode = mode
+        Circuit.Components.Wire.BuildMode = mode
         if self.Mode == Params.GUI.Modes.Wire:
             self.TmpComponents[0].Update()
             self.Draw()
 
     def Set(self):
         if self.Mode == Params.GUI.Modes.Wire:
-            if self.TmpComponents[0].Fix(True):
-                self.TmpComponents.pop(0)
+            if self.TmpComponents:
+                ClosesCircuit = self.ComponentsHandler.HasItem(self.Cursor)
+                if self.TmpComponents[0].Fix(True):
+                    self.TmpComponents.pop(0)
+                    if Params.GUI.Behaviour.AutoContinueWire and not (ClosesCircuit and Params.GUI.Behaviour.StopWireOnJoin):
+                        self.StartWire()
+                    self.Draw()
+            else:
                 self.StartWire()
                 self.Draw()
 
@@ -265,13 +273,14 @@ class GUI:
 
         self.MainFrame.Board.View.AdvertiseChild(self.DisplayCanvas.get_tk_widget(), "Plot")
         self.MainFrame.Board.View.Plot.grid(row = 0, column = 0)
-        Components.ComponentBase.Board = self.DisplayAx
+        Circuit.Components.ComponentBase.Board = self.DisplayAx
 
     def Draw(self):
         self.DisplayFigure.canvas.draw()
 
     def LoadDisplayToolbar(self):
         self.MainFrame.Board.DisplayToolbar.AddFrame("Buttons", Side = Tk.TOP, Border = False)
+        self.MainFrame.Board.DisplayToolbar.AddFrame("Labels", Side = Tk.TOP, Border = False)
         self.MainFrame.Board.DisplayToolbar.Buttons.RemoveDefaultName()
         self.DisplayToolbar = NavigationToolbar2Tk(self.DisplayCanvas, self.MainFrame.Board.DisplayToolbar.Buttons.frame)
         NewCommands = {'!button':self.SetDefaultView, # Remap Home button
@@ -289,7 +298,8 @@ class GUI:
         for button, command in NewCommands.items():
             self.DisplayToolbar.children[button].config(command=command)
         self.DisplayToolbar.update()
-        self.MainFrame.Board.DisplayToolbar.AddWidget(Tk.Label, "CursorLabel", text = "")
+        self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "CursorLabel", text = "")
+        self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "ComponentLabel", text = "")
 
     def LoadConsole(self):
         #self.MainFrame.Console.AddWidget(Console.ConsoleWidget, "Console", _locals=locals(), exit_callback=self.MainWindow.destroy)
@@ -299,6 +309,9 @@ class GUI:
         self.MainFrame.Console.AdvertiseChild(ConsoleInstance, "ConsoleInstance")
         ConsoleInstance.text.bind('<Button-1>', lambda e:self.SetMode(Params.GUI.Modes.Console, Advertise = False))
 
+    def _ToggleConnexion(self):
+        self.ComponentsHandler.ToggleConnexion(self.Cursor)
+
     def Close(self, Restart = False):
         self.MainWindow.quit()
         self.Restart = Restart
@@ -307,46 +320,6 @@ class GUI:
 def Void(*args, **kwargs):
     pass
     #print(args[0])
-
-class ComponentsHandler:
-    def __init__(self):
-        self.MaxValue = 0
-        self.Dict = {}
-        self.ComponentsLimits = np.array([[0,0], [0.,0]])
-        self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 9), dtype = int)
-
-    def Register(self, Locations, Component):
-        Values = self.Map[Locations[:,0], Locations[:,1], Locations[:,2]]
-        if (Values != 0).any(): # TODO : Ask for wire bridges
-            LogWarning(f"Unable to register the new wire, due to positions {Locations[np.where(Values != 0), :].tolist()}")
-            return False
-        self.SetID(Component)
-        self.Map[Locations[:,0], Locations[:,1], Locations[:,2]] = Component.ID
-        for x, y, _ in Locations:
-            Column = self.Map[x,y,:]
-            if Column[-1] and self.Dict[Column[-1]].Displayed:
-                self.Dict[Column[-1]].Update(Column)
-        StartColumn = self.Map[Locations[0,0], Locations[0,1],:]
-        if StartColumn[-1]:
-            self.Dict[StartColumn[-1]].Update(StartColumn)
-        else:
-            self.AddConnexion(Locations[0,:2], StartColumn)
-        EndColumn = self.Map[Locations[-1,0], Locations[-1,1],:]
-        if EndColumn[-1]:
-            self.Dict[EndColumn[-1]].Update(EndColumn)
-        else:
-            self.AddConnexion(Locations[-1,:2], EndColumn)
-
-        return True
-
-    def SetID(self, Component): # Sets the ID of a component and stores it
-        self.MaxValue += 1
-        Component.ID = self.MaxValue
-        self.Dict[Component.ID] = Component
-
-    def AddConnexion(self, Location, Column):
-        NewConnexion = Components.Connexion(Location, Column)
-        self.SetID(NewConnexion)
 
 class SFrame:
     def __init__(self, frame, Name="Main", Side = None, NameDisplayed = False):
