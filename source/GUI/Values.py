@@ -40,6 +40,7 @@ class Params:
         class PlotsStyles:
             Wire = '-'
             Connexion = '8'
+            Component
         class Controls:
             Moves = {
                 "right":np.array([1,0]),

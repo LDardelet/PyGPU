@@ -2,7 +2,7 @@ import numpy as np
 
 import Components
 from Values import Colors, Params
-from Console import ConsoleWidget, Log, LogSuccess, LogWarning, LogError
+from Console import Log, LogSuccess, LogWarning, LogError
 
 class ComponentsHandler:
     def __init__(self):
