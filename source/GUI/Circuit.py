@@ -9,10 +9,11 @@ class ComponentsHandler:
         GroupClass.Handler = self
 
         self.MaxValue = 0
-        self.Dict = {}
+        self.Components = {}
         self.ComponentsLimits = np.array([[0,0], [0.,0]])
         self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 9), dtype = int)
 
+        self.HighlightedGroup = None
         self.Groups = {} # Groups shre wire transmissions
 
     def Register(self, Locations, NewComponent, NewConnexionsLocations):
@@ -24,14 +25,16 @@ class ComponentsHandler:
         self.SetComponent(NewComponent, Locations)
         for Location in Locations:
             ConnID = self.Map[Location[0],Location[1],-1]
-            if ConnID and self.Dict[ConnID].Displayed: # Start by linking existing connexions on the advertized locations
-                self.Dict[ConnID].Update(self.Map[Location[0],Location[1],:])
+            if ConnID and self.Components[ConnID].Displayed: # Start by linking existing connexions on the advertized locations
+                self.Components[ConnID].Update(self.Map[Location[0],Location[1],:])
+                self.AddLink(NewComponent.ID, ConnID)
 
-        for Location in NewConnexionsLocations: # Add automatically created connexions
+        for Location in NewConnexionsLocations: # Add automatically created connexions, in particular to existing hidden connexions
             ConnID = self.Map[Location[0],Location[1],-1]
             if ConnID:
-                if not self.Dict[ConnID].LinkedTo(NewComponent.ID):# If NewConnexionsLocations should already be within Locations, hidden connexions would have been avoided due to previous method
-                    self.Dict[ConnID].Update(self.Map[Location[0],Location[1],:])
+                if not self.Components[ConnID].LinkedTo(NewComponent.ID):# If NewConnexionsLocations should already be within Locations, hidden connexions would have been avoided due to previous method
+                    self.Components[ConnID].Update(self.Map[Location[0],Location[1],:])
+                    self.AddLink(NewComponent.ID, ConnID)
             else:
                 self.AddConnexion(Location) # If not, we create it
         return True
@@ -39,13 +42,14 @@ class ComponentsHandler:
     def SetComponent(self, Component, AdvertisedLocations): # Sets the ID of a component and stores it. Does not handle links.
         self.MaxValue += 1
         Component.ID = self.MaxValue
-        self.Dict[Component.ID] = Component
+        self.Components[Component.ID] = Component
+        Component.Group = GroupClass(Component)
+        Component.AdvertisedLocations = np.array(AdvertisedLocations)
         for x, y, theta in AdvertisedLocations:
-            Component.AdvertisedLocations.add((x,y,theta))
             self.Map[x,y,theta] = Component.ID
 
     def DestroyComponent(self, ID): # Completely removes the component by its ID. Does not handle links.
-        Component = self.Dict.pop(ID)
+        Component = self.Components.pop(ID)
         for x, y, theta in Component.AdvertisedLocations:
             self.Map[x,y,theta] = 0
         Component.destroy()
@@ -64,7 +68,9 @@ class ComponentsHandler:
         self.SetComponent(NewConnexion, ((Location[0], Location[1], -1),))
         for ID in Column[:-1]:
             if ID:
-                self.Link(ID, NewConnexion.ID)
+                if NewConnexion.Group is None:
+                    self.Components[ID].Group.AddComponent(NewConnexion)
+                self.AddLink(ID, NewConnexion.ID)
     def RemoveConnexion(self, Location):
         Column = self.Map[Location[0], Location[1],:]
         if Column[-1]:
@@ -73,7 +79,7 @@ class ComponentsHandler:
         IDs = set()
         for ID in Column[:-1]:
             if ID:
-                if type(self.Dict[ID]) != Components.Wire:
+                if type(self.Components[ID]) != Components.Wire:
                     LogWarning("Cannot remove connexion as it is linked to a component")
                     return
                 IDs.add(ID)
@@ -82,18 +88,30 @@ class ComponentsHandler:
             self.BreakLink(ID, ConnID)
         self.DestroyComponent(ConnID)
 
-    def Link(self, ID1, ID2): # Must be here to ensure symmetric props
-        self.Dict[ID1].Links.add(ID2)
-        self.Dict[ID2].Links.add(ID1)
-    def BreakLink(self, ID1, ID2): # Must be here to ensure symmetric props
+    def AddLink(self, ID1, ID2): # Must be here to ensure symmetric props
+        self.Components[ID1].Links.add(ID2)
+        self.Components[ID2].Links.add(ID1)
+        if self.Components[ID1].Group != self.Components[ID2].Group:
+            self.Components[ID1].Group.Merge(self.Components[ID2].Group)
+
+    def BreakLink(self, ID1, ID2): 
         try:
-            self.Dict[ID1].Links.remove(ID2)
+            self.Components[ID1].Links.remove(ID2)
         except KeyError:
             LogError(f"ID {ID2} was not advertized for ID {ID1} (1)")
         try:
-            self.Dict[ID2].Links.remove(ID1)
+            self.Components[ID2].Links.remove(ID1)
         except KeyError:
             LogError(f"ID {ID1} was not advertized for ID {ID2} (2)")
+
+    def MoveHighlight(self, Location):
+        Groups = list({self.Components[ID].Group for ID in self.Map[Location[0], Location[1],:-1] if ID})
+        if self.HighlightedGroup and (not Groups or self.HighlightedGroup != Groups[0]):
+            self.HighlightedGroup.Highlight(False)
+            self.HighlightedGroup = None
+        if Groups:
+            self.HighlightedGroup = Groups[0]
+            self.HighlightedGroup.Highlight(True)
 
     def Repr(self, Location):
         NWires = 0
@@ -102,7 +120,7 @@ class ComponentsHandler:
         Column = self.Map[Location[0], Location[1],:]
         for ID in Column[:-1]:
             if ID:
-                Component = self.Dict[ID]
+                Component = self.Components[ID]
                 if type(Component) == Components.Wire:
                     NWires += 1
                 else:
@@ -114,25 +132,52 @@ class ComponentsHandler:
         if NWires:
             Data = [Components.Wire.CName+'s'*(NWires >= 3)] + Data
         if Keypoint or (NWires >= 3 and Column[-1]):
-            Data += ["(connected)"]
+            Add = " (connected)"
         elif not Keypoint and (NWires >= 3 and not Column[-1]):
-            Data += ["(isolated)"]
-        return ', '.join(Data)
+            Add = " (isolated)"
+        else:
+            Add = ""
+        return ', '.join(Data) + Add
 
     def HasItem(self, Location):
         return self.Map[Location[0], Location[1], :8].any()
 
 class GroupClass:
-    Handler = None
+    Handler = None # Allows to handles group storage
     def __init__(self, BaseComponent): # To avoid creating useless new IDs, a group ID is define by the ID of its first component. May lead to issues later on, but unlikely.
         self.ID = BaseComponent.ID
+        self.Handler.Groups[self.ID] = self
+        BaseComponent.Group = self
         self.Components = {BaseComponent}
 
+        self.HighlightPlots = list(BaseComponent.HighlightPlots)
+
+        self.Value = None
+        self.SetBy = None
+
     def Merge(self, Group): # We keep the lowest ID possible.
-        if self.ID > Group.ID:
-            self, Group = Group, self # May not work, not checked yet
-        
+        #if self.ID > Group.ID:
+        #    self, Group = Group, self # May not work, not checked yet. Removed for now
+        self.HighlightPlots += Group.HighlightPlots
         for Component in Group.Components:
-            Component.Group = self.ID
-        self.Elements.update(Group.Components)
+            Component.Group = self
+        self.Components.update(Group.Components)
         del self.Handler.Groups[Group.ID]
+
+    def AddComponent(self, Component):
+        Component.Group = self
+        self.Components.add(Component)
+        self.HighlightPlots += Component.HighlightPlots
+
+    def SetValue(self, Value, Component):
+        if not self.SetBy is None and Component != self.SetBy:
+            LogWarning(f"Group {self.ID} set by {Component} and {self.SetBy}")
+        self.SetBy = Component
+        self.Value = Value
+
+    def Highlight(self, var):
+        for Component in self.Components:
+            Component.Highlight(var)
+
+    def __repr__(self):
+        return f"Group {self.ID}"

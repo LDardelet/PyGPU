@@ -2,38 +2,45 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from importlib import reload
-from Values import Colors, Markers, Params
+from Values import Colors, Params
 
 class ComponentBase:
     Board = None
     Handler = None
+    DefaultLinewidth = 0
+    DefaultMarkersize = 0
+    RotationAllowed = True
+    CName = None
     def __init__(self, Location):
-        self.CName = None
-
         self.Location = np.array(Location)
         self.Rotation = 0
-        self.Highlight = False
+        self.Highlighted = False
         self.Fixed = False
         self.Plots = []
+        self.HighlightPlots = []
 
         self.AdvertisedLocations = set()
         self.Links = set()
 
         self.ID = None
+        self.Group = None
 
-    def plot(self, *args, **kwargs):
-        self.Plots += self.Board.plot(*args, **kwargs)
+    def plot(self, *args, Highlight = True, **kwargs):
+        self.Plots.append(self.Board.plot(*args, **kwargs))
+        if Highlight:
+            self.HighlightPlots.append(self.Plots[-1])
 
     def Highlight(self, var):
-        if var == self.Highlight:
+        if var == self.Highlighted:
             return
-        self.Highlight = var
-        if self.Highlight:
-            for Plot in self.Plots:
-                Plot.set_linewidth(Plot.get_linewidth()*2)
+        self.Highlighted = var
+        if self.Highlighted:
+            Factor = Params.GUI.PlotsWidths.HighlightFactor
         else:
-            for Plot in self.Plots:
-                Plot.set_linewidth(Plot.get_linewidth()/2)
+            Factor = 1
+        for Plot in self.HighlightPlots:
+            Plot.set_linewidth(self.DefaultLinewidth*Factor)
+            Plot.set_markersize(self.DefaultMarkersize*Factor)
 
     def Fix(self, var):
         if var == self.Fixed:
@@ -53,12 +60,14 @@ class ComponentBase:
         pass
 
     def Rotate(self):
+        if not self.RotationAllowed:
+            return
         self.Rotation += 1
-        self.Update()
+        self.UpdateLocation()
 
     @property
     def Extent(self):
-        pass
+        return (self.AdvertisedLocations[:,0].min(), self.AdvertisedLocations[:,1].min(), self.AdvertisedLocations[:,0].max(), self.AdvertisedLocations[:,1].max())
 
     def destroy(self):
         for plot in self.Plots:
@@ -67,22 +76,123 @@ class ComponentBase:
     def __repr__(self):
         return f"{self.__class__.__name__} at {self.Location}"
 
+class ComponentPin(ComponentBase):
+    DefaultLinewidth = Params.GUI.PlotsWidths.Wire
+    DefaultMarkersize = 0
+    CName = "Input"
+    def __init__(self, Parent, PinBaseOffset, Side):
+        self.Parent = Parent
+        self.BaseRotation = {'E':0,
+                             'N':1,
+                             'W':2,
+                             'S':3}[Side]
+        self.PinBaseOffset = np.array(PinBaseOffset)
+        self.Vector = Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation + 2)
+        self.Offset = Self.PinBaseOffset + self.Vector
+
+        Loc = self.Location
+        BLoc = self.PinBaseLocation
+
+        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+
+    @property
+    def Location(self):
+        return Parent.Location + RotateOffset(self.Offset, self.Rotation)
+    @property
+    def PinBaseLocation(self):
+        return Parent.Location + RotateOffset(self.PinBaseOffset, self.Rotation)
+
+    @property
+    def Rotation(self):
+        return self.Parent.Rotation # Entries are on the left side, so entry wire goes towawrd the right, thus same orientation as its parent
+    @property
+    def ID(self):
+        return Parent.ID
+    @property
+    def AdvertisedLocations(self):
+        Locations = np.zeros((9,3), dtype = int)
+        Locations[0,:2] = self.Location
+        Locations[0,-1] = (self.Rotation%4)*2
+        Locations[1:,:2] = self.PinBaseLocation
+        Locations[1:,:] = np.arange(8)
+        return Locations
+
+class ComponentOutput(ComponentBase):
+    DefaultLinewidth = Params.GUI.PlotsWidths.Wire
+    DefaultMarkersize = 0
+    CName = "Output"
+    def __init__(self, Parent, Offset):
+        self.Parent = Parent
+        self.Offset = Offset + np.array([Params.Board.ComponentPinLength, 0])
+
+        Loc = self.Location
+        BLoc = self.PinBaseLocation
+
+        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+
+    @property
+    def Location(self):
+        return Parent.Location + RotateOffset(self.Offset, self.Rotation)
+    @property
+    def PinBaseLocation(self):
+        return Parent.Location + RotateOffset(self.Offset - np.array([Params.Board.ComponentPinLength, 0]), self.Rotation)
+
+    @property
+    def Rotation(self):
+        return self.Parent.Rotation + 2 # Entries are on the left side, so entry wire goes towawrd the right, thus same orientation as its parent
+    @property
+    def ID(self):
+        return Parent.ID
+    @property
+    def AdvertisedLocations(self):
+        Locations = np.zeros((9,3), dtype = int)
+        Locations[0,:2] = self.Location
+        Locations[0,-1] = (self.Rotation%4)*2
+        Locations[1:,:2] = self.PinBaseLocation
+        Locations[1:,:] = np.arange(8)
+        return Locations
+
+class Component(ComponentBase): # Template to create any type of component
+    DefaultLinewidth = Params.GUI.PlotsWidths.Component
+    Width = Params.Board.ComponentDefaultWidth
+    def __init__(self, NInputs, NOutputs, Name, Location):
+        ComponentBase.__init__(self, Location)
+        self.CName = CName
+
+        self.NInputs = NInputs
+        self.NOutputs = NOutputs
+
+        self.Height = 
+
+
+def RotateOffset(Offset, Rotation): # Use LRU ?
+    RotValue = (Rotation & 0b11)
+    if RotValue == 0:
+        return Offset
+    if RotValue == 1:
+        return np.array([-Offset[1], Offset[0]])
+    if RotValue == 2:
+        return -Offset
+    if RotValue == 3:
+        return np.array([Offset[1], -Offset[0]])
+
 class Wire(ComponentBase):
-    Params = Params.Wire
-    BuildMode = Params.DefaultBuildMode
+    BuildMode = Params.GUI.Behaviour.DefaultBuildMode
+    DefaultLinewidth = Params.GUI.PlotsWidths.Wire
+    DefaultMarkersize = 0
     CName = "Wire"
     def __init__(self, StartLocation, EndLocation = None):
         ComponentBase.__init__(self, StartLocation)
 
         self.Points = np.zeros((3,2), dtype = int)
-        self.plot(self.Points[:2,0], self.Points[:2,1], color = Colors.Components.build, linewidth = self.Params.Width)
-        self.plot(self.Points[1:,0], self.Points[1:,1], color = Colors.Components.build, linewidth = self.Params.Width)
+        self.plot(self.Points[:2,0], self.Points[:2,1], color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        self.plot(self.Points[1:,0], self.Points[1:,1], color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
         self.Points[0,:] = StartLocation
         if EndLocation is None:
             self.Points[2,:] = StartLocation
         else:
             self.Points[2,:] = EndLocation
-        self.Update()
+        self.UpdateLocation()
 
         self.Value = None
         self.Connects = set()
@@ -111,7 +221,7 @@ class Wire(ComponentBase):
             else:
                 return False
 
-    def Update(self):
+    def UpdateLocation(self):
         if self.BuildMode == 0: # Straight wires
             if (self.Rotation & 0b1) == 0:
                 self.Points[1,0] = self.Points[2,0]
@@ -154,10 +264,12 @@ class Wire(ComponentBase):
 
     def Drag(self, Cursor):
         self.Points[2,:] = Cursor
-        self.Update()
+        self.UpdateLocation()
 
 class Connexion(ComponentBase):
     CName = "Connexion"
+    DefaultLinewidth = 0
+    DefaultMarkersize = Params.GUI.PlotsWidths.Connexion
     def __init__(self, Location, Column): # Warning : 0 is stored in sets, to avoid many checks.
         ComponentBase.__init__(self, Location)
         self.Fixed = True
@@ -165,7 +277,7 @@ class Connexion(ComponentBase):
         self.IDs = set(Column[:8]) # Set to avoid unnecessary storage
         self.NWires = (Column[:8] > 0).sum()
         
-        self.plot(self.Location[0], self.Location[1], marker = Markers.Connexion, color = Colors.Components.fixed)
+        self.plot(self.Location[0], self.Location[1], marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = Colors.Components.fixed)
         self.CheckDisplay()
 
     def Update(self, Column):

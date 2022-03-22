@@ -113,6 +113,7 @@ class GUI:
 
     def OnMove(self):
         self.UpdateCursor()
+        self.ComponentsHandler.MoveHighlight(self.Cursor)
         self.CheckBoardLimits()
         for Component in self.TmpComponents:
             Component.Drag(self.Cursor)
@@ -385,6 +386,7 @@ class SFrame:
 if __name__ == '__main__':
     G = GUI()
     if G.Restart:
+        print("Restarting")
         sys.exit(5)
     else:
         sys.exit(0)

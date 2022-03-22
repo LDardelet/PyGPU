@@ -11,15 +11,11 @@ class Colors:
         bg = 'light grey'
         pressed = 'grey'
 
-class Markers:
-    Connexion = 'o'
-
 class Params:
     class Board:
         Size = 1000
-    class Wire:
-        Width = 1
-        DefaultBuildMode = 0
+        ComponentPinLength = 1
+        ComponentDefaultWidth = 4
     class GUI:
         class Modes:
             Default = 0
@@ -36,6 +32,14 @@ class Params:
 
             RefLineEvery = 20
             CursorLinesWidth = 1
+        class PlotsWidths:
+            HighlightFactor = 1.7
+            Wire = 1
+            Connexion = 6
+            Component = 0.6
+        class PlotsStyles:
+            Wire = '-'
+            Connexion = '8'
         class Controls:
             Moves = {
                 "right":np.array([1,0]),
@@ -60,5 +64,6 @@ class Params:
             AutoStartWire = False
             AutoContinueWire = True
             StopWireOnJoin = True
+            DefaultBuildMode = 0
 
 Params.Board.Max = Params.Board.Size // 2
