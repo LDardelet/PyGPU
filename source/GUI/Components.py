@@ -13,21 +13,24 @@ class ComponentBase:
     RotationAllowed = True
     CName = None
     def __init__(self, Location):
-        self.Location = np.array(Location)
-        self.Rotation = 0
-        self.Highlighted = False
+        if not Location is None: # Happend for a child component, in which case both values are defined by the parents
+            self.Location = np.array(Location)
+            self.Rotation = 0
+            self.AdvertisedLocations = set()
+            self.ID = None
+
         self.Fixed = False
+
+        self.Highlighted = False
         self.Plots = []
         self.HighlightPlots = []
 
-        self.AdvertisedLocations = set()
         self.Links = set()
 
-        self.ID = None
         self.Group = None
 
     def plot(self, *args, Highlight = True, **kwargs):
-        self.Plots.append(self.Board.plot(*args, **kwargs))
+        self.Plots.append(self.Board.plot(*args, **kwargs)[0])
         if Highlight:
             self.HighlightPlots.append(self.Plots[-1])
     def text(self, *args, Highlight = True, **kwargs):
@@ -68,6 +71,9 @@ class ComponentBase:
         self.Rotation += 1
         self.UpdateLocation()
 
+    def Run(self):
+        pass
+
     @property
     def Extent(self):
         return (self.AdvertisedLocations[:,0].min(), self.AdvertisedLocations[:,1].min(), self.AdvertisedLocations[:,0].max(), self.AdvertisedLocations[:,1].max())
@@ -79,11 +85,91 @@ class ComponentBase:
     def __repr__(self):
         return f"{self.__class__.__name__} at {self.Location}"
 
+class Component(ComponentBase): # Template to create any type of component
+    DefaultLinewidth = Params.GUI.PlotsWidths.Component
+    West = ''
+    East = ''
+    North= ''
+    South= ''
+    Callback = None
+    Schematics = None
+    ForceWidth = None
+    ForceHeight = None
+    def __init__(self, Location):
+        ComponentBase.__init__(self, Location)
+        if self.Callback is None:
+            if self.Schematics is None:
+                raise ValueError("Component must have either a callback or an inner schematics to run")
+            self.Run = self.Schematics.Run
+        else:
+            self.Run = self.Callback
+
+        self.Width = max(Params.Board.ComponentMinWidth, 1+max(len(self.North), len(self.South)))
+        self.Height = max(Params.Board.ComponentMinHeight, 1+max(len(self.West), len(self.East)))
+        if self.ForceWidth:
+            if self.Width > self.ForceWidth:
+                raise ValueError(f"Unable to place all pins on component {self.CName} with constrained width {self.ForceWidth}")
+            self.Width = self.ForceWidth
+        if self.ForceHeight:
+            if self.Height > self.ForceHeight:
+                raise ValueError(f"Unable to place all pins on component {self.CName} with constrained height {self.ForceHeight}")
+            self.Height = self.ForceHeight
+
+        self.LocToSWOffset = -np.array([self.Width//2, self.Height//2])
+
+        for Xs, Ys in self.CasingSides:
+            self.plot(Xs, Ys, color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Component, linewidth = self.DefaultLinewidth)
+
+        self.text(*self.Location, s = self.CName, color = Colors.Components.build, va = 'center', ha = 'center', rotation = ('vertical', 'horizontal')[self.Width > 10])
+
+        self.Pins = {}
+        for nPin, PinName in enumerate(self.West):
+            Offset = self.LocToSWOffset + np.array([0, self.Height-nPin-1])
+            self.Pins[f"W.{nPin}"] = ComponentPin(self, Offset, 'W', PinName)
+        for nPin, PinName in enumerate(self.East):
+            Offset = self.LocToSWOffset + np.array([self.Width, self.Height-nPin-1])
+            self.Pins[f"E.{nPin}"] = ComponentPin(self, Offset, 'E', PinName)
+        for nPin, PinName in enumerate(self.North):
+            Offset = self.LocToSWOffset + np.array([1+nPin, self.Height])
+            self.Pins[f"N.{nPin}"] = ComponentPin(self, Offset, 'N', PinName)
+        for nPin, PinName in enumerate(self.East):
+            Offset = self.LocToSWOffset + np.array([1+nPin, 0])
+            self.Pins[f"S.{nPin}"] = ComponentPin(self, Offset, 'S', PinName)
+
+    def Fix(self, var):
+        ComponentBase.Fix(var)
+        for Pin in self.Pins.values():
+            Pin.Fix(var)
+
+    def Drag(self, Cursor):
+        self.Location = np.array(Cursor)
+        self.UpdateLocation()
+
+    def UpdateLocation(self):
+        for Plot, (Xs, Ys) in zip(self.Plots[:4], self.CasingSides):
+            Plot.set_data(Xs, Ys)
+        self.Plots[4].set_x(self.Location[0])
+        self.Plots[4].set_y(self.Location[1])
+
+        for Pin in self.Pins.values():
+            Pin.UpdateLocation()
+
+    @property
+    def CasingSides(self):
+        Offset = RotateOffset(self.LocToSWOffset, self.Rotation)
+        x,y = self.Location + RotateOffset(self.LocToSWOffset, self.Rotation)
+        X,Y = self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height]), self.Rotation)
+        return (((x,x), (y,Y)), # West
+                ((x,X), (Y,Y)), # North
+                ((X,X), (Y,y)), # East
+                ((X,x), (y,y))) # South
+
 class ComponentPin(ComponentBase):
     DefaultLinewidth = Params.GUI.PlotsWidths.Wire
     DefaultMarkersize = 0
-    CName = "Input"
+    CName = "Pin"
     def __init__(self, Parent, PinBaseOffset, Side, Name = ''):
+        ComponentBase.__init__(self, None)
         self.Parent = Parent
         self.Name = Name
         self.BaseRotation = {'E':0,
@@ -92,7 +178,7 @@ class ComponentPin(ComponentBase):
                              'S':3}[Side]
         self.PinBaseOffset = np.array(PinBaseOffset)
         self.Vector = Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation + 2)
-        self.Offset = Self.PinBaseOffset + self.Vector
+        self.Offset = self.PinBaseOffset + self.Vector
 
         Loc = self.Location
         BLoc = self.PinBaseLocation
@@ -109,17 +195,17 @@ class ComponentPin(ComponentBase):
             TLoc = self.TextLocation
             self.Plots[1].set_x(TLoc[0])
             self.Plots[1].set_y(TLoc[1])
-            self.Plots[1].set(self.NameTextDict(self.Rotation))
+            self.Plots[1].set(**self.NameTextDict(self.Rotation))
 
     @property
     def Location(self):
-        return Parent.Location + RotateOffset(self.Offset, self.Rotation)
+        return self.Parent.Location + RotateOffset(self.Offset, self.Rotation)
     @property
     def PinBaseLocation(self):
-        return Parent.Location + RotateOffset(self.PinBaseOffset, self.Rotation)
+        return self.Parent.Location + RotateOffset(self.PinBaseOffset, self.Rotation)
     @property
     def TextLocation(self):
-        return Parent.Location + RotateOffset(self.PinBaseOffset - self.Vector, self.Rotation)
+        return self.Parent.Location + RotateOffset(self.PinBaseOffset - self.Vector, self.Rotation)
 
     @property
     def Rotation(self):
@@ -142,66 +228,6 @@ class ComponentPin(ComponentBase):
         return {'rotation':('horizontal', 'vertical', 'horizontal', 'vertical')[SideIndex],
                 'va':('center', 'top', 'center', 'bottom')[SideIndex],
                 'ha':('right', 'center', 'left', 'center')[SideIndex]}
-
-class Component(ComponentBase): # Template to create any type of component
-    DefaultLinewidth = Params.GUI.PlotsWidths.Component
-    def __init__(self, Location, Name, West, East, North=None, South=None, ForceWidth = None, ForceHeight = None):
-        ComponentBase.__init__(self, Location)
-        self.CName = CName
-
-        self.West = West
-        self.East = East
-        if North is None:
-            self.North = []
-        else:
-            self.North = North
-        if South is None:
-            self.South = []
-        else:
-            self.South = South
-        self.Width = max(Params.Board.ComponentDefaultWidth, 1+max(len(self.North), len(self.South)))
-        self.Height = 1+max(len(self.West), len(self.East))
-        if ForceWidth:
-            if self.Width > ForceWidth:
-                LogError(f"Unable to place all pins on component {self.CName} with constrained width {ForceWidth}")
-                raise ValueError
-            self.Width = ForceWidth
-        if ForceHeight:
-            if self.Height > ForceHeight:
-                LogError(f"Unable to place all pins on component {self.CName} with constrained height {ForceHeight}")
-                raise ValueError
-            self.Height = ForceHeight
-
-        self.LocToSWOffset = -np.array([self.Width//2, self.Height//2])
-
-        for Xs, Ys in self.CasingSides:
-            self.plot(*Xs, *Ys, color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Component, linewidth = self.DefaultLinewidth)
-
-        self.text(*self.Location, s = self.CName, color = Colors.Components.build, va = 'center', ha = 'center', rotation = ('vertical', 'horizontal')[self.Width > 10])
-
-        self.Pins = {}
-        for nPin, PinName in enumerate(West):
-            Offset = self.LocToSWOffset + self.Height + np.array([0, -nPin-1])
-            self.Pins[f"W.{nPin}"] = ComponentPin(self, Offset, 'W', PinName)
-        for nPin, PinName in enumerate(East):
-            Offset = self.LocToSWOffset + self.Height + np.array([self.Width, -nPin-1])
-            self.Pins[f"E.{nPin}"] = ComponentPin(self, Offset, 'E')
-            self.text(*(self.Location + self.LocToSWOffset + self.Height + np.array([self.Width-1, -nPin-1])), s=PinName, color = Colors.Components.build, va = 'center', ha = 'right')
-
-    def Fix(self, var):
-        ComponentBase.Fix(var)
-        for Pin in self.Pins.values():
-            Pin.Fix(var)
-
-    @property
-    def CasingSides(self):
-        Offset = RotateOffset(self.LocToSWOffset, self.Rotation)
-        x,y = self.Location + RotateOffset(self.LocToSWOffset, self.Rotation)
-        X,Y = self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height]), self.Rotation)
-        return (((x,x), (y,Y)), # West
-                ((x,X), (Y,Y)), # North
-                ((X,X), (Y,y)), # East
-                ((X,x), (y,y))) # South
 
 def RotateOffset(Offset, Rotation): # Use LRU ?
     RotValue = (Rotation & 0b11)
@@ -315,7 +341,7 @@ class Connexion(ComponentBase):
         self.IDs = set(Column[:8]) # Set to avoid unnecessary storage
         self.NWires = (Column[:8] > 0).sum()
         
-        self.plot(self.Location[0], self.Location[1], marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = Colors.Components.fixed)
+        self.plot(self.Location[0], self.Location[1], Highlight = False, marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = Colors.Components.fixed)
         self.CheckDisplay()
 
     def Update(self, Column):

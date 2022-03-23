@@ -15,7 +15,8 @@ class Params:
     class Board:
         Size = 1000
         ComponentPinLength = 1
-        ComponentDefaultWidth = 4
+        ComponentMinWidth = 4
+        ComponentMinHeight = 8
     class GUI:
         class Modes:
             Default = 0
@@ -25,6 +26,8 @@ class Params:
                       1: "Wire",
                       2: "Console"
         }
+        class Library:
+            ComponentHeight = 3
         class View:
             FigSize = (7.,7.)
             DPI = 100
@@ -37,10 +40,11 @@ class Params:
             Wire = 1
             Connexion = 6
             Component = 0.6
+            CNameFontsize = 15
         class PlotsStyles:
             Wire = '-'
             Connexion = '8'
-            Component
+            Component = '-'
         class Controls:
             Moves = {
                 "right":np.array([1,0]),
@@ -52,10 +56,14 @@ class Params:
                      'w':1,
                      'twosuperior':2
             }
+            Components = {'AND': 'a',
+                          'OR' : 'o',
+                          'NOT': 'n'
+            }
             Close = 'f4'
             Restart = 'f5'
             Rotate = 'r'
-            Switch = 'a'
+            Switch = 't'
             Set = 'space'
             Connect = 'c'
         class Console:

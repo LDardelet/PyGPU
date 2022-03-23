@@ -3,10 +3,12 @@ import numpy as np
 import Components
 from Values import Colors, Params
 from Console import Log, LogSuccess, LogWarning, LogError
+import DefaultLibrary
 
 class ComponentsHandler:
     def __init__(self):
         GroupClass.Handler = self
+        Components.ComponentBase.Handler = self
 
         self.MaxValue = 0
         self.Components = {}
@@ -181,3 +183,53 @@ class GroupClass:
 
     def __repr__(self):
         return f"Group {self.ID}"
+
+# Component template signature :
+# (Location, West, East, North=None, South=None, Callback = None, Schematics = None, ForceWidth = None, ForceHeight = None)
+
+class CGroup:
+    def __init__(self, GName, GComponents = {}):
+        self.Name = GName
+        self.Components = []
+        for Name, Values in GComponents.items():
+            if Name in self.__dict__:
+                LogWarning(f"Component name {Name} already exists in this library")
+                continue
+            self.Components.append(Name)
+            if isinstance(Values, type(Components.ComponentBase)):
+                self.__dict__[Name] = Values
+            else:
+                self.AddComponentClass(Name, Values)
+
+    def AddComponentClass(self, Name, Values):
+        try:
+            West, East, North, South, Callback, Schematics, ForceWidth, ForceHeight = Values
+        except ValueError:
+            LogWarning(f"Unable to load component {Name} from its definition")
+            return
+        self.__dict__[Name] = type(Name, 
+                                   (Components.Component, ), 
+                                   {
+                                       '__init__': Components.Component.__init__,
+                                       'CName': Name,
+                                       'West' : West,
+                                       'East' : East,
+                                       'North': North,
+                                       'South': South,
+                                       'Callback'   : Callback,
+                                       'Schematics' : Schematics,
+                                       'ForceWidth' :ForceWidth,
+                                       'ForceHeight':ForceHeight,
+                                   })
+class CLibrary:
+    ComponentBase = Components.ComponentBase
+    def __init__(self):
+        self.Groups = []
+        self.AddGroup(CGroup('Basic', DefaultLibrary.BasicGates.Definitions))
+        self.AddGroup(CGroup('IO', {
+            'Wire': Components.Wire,
+        }))
+
+    def AddGroup(self, Group):
+        self.__dict__[Group.Name] = Group
+        self.Groups.append(Group.Name)

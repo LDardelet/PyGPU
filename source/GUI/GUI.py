@@ -22,30 +22,27 @@ class GUI:
 
         self._Images = {}
     
+        self.LoadBoardData()
+        self.DefineKeys()
+
         self.MainFrame = SFrame(self.MainWindow)
         self.MainFrame.AddFrame("Toolbar", 0, 0, columnspan = 3)
-        self.MainFrame.AddFrame("Components", 1, 0, Side = Tk.TOP)
+        self.MainFrame.AddFrame("Library", 1, 0, Side = Tk.TOP)
         self.MainFrame.AddFrame("Board", 1, 1, Side = Tk.TOP)
         self.MainFrame.AddFrame("Parameters", 1, 2, Side = Tk.TOP)
         self.MainFrame.AddFrame("Console", 2, 0, columnspan = 3, Side = Tk.LEFT)
-
-        self.MainFrame.Components.AddFrame("I/O", Side = Tk.TOP, NameDisplayed = True)
-        self.MainFrame.Components.AddFrame("Basic Gates", Side = Tk.TOP, NameDisplayed = True)
-        self.MainFrame.Components.AddFrame("Custom Components", Side = Tk.TOP, NameDisplayed = True)
 
         self.MainFrame.Board.AddFrame("Controls", Side = Tk.LEFT)
         self.MainFrame.Board.AddFrame("View")
         self.MainFrame.Board.AddFrame("DisplayToolbar", Side = Tk.LEFT)
 
-        self.LoadBoardData()
-
+        self.LoadConsole()
         self.LoadControls()
         self.LoadView()
         self.LoadDisplayToolbar()
-        self.LoadConsole()
         self.SetDefaultView()
 
-        self.DefineKeys()
+        self.LoadLibraryGUI()
 
         self.MainWindow.mainloop()
 
@@ -53,8 +50,8 @@ class GUI:
         self.Mode = Params.GUI.Modes.Default
 
         self.ComponentsHandler = Circuit.ComponentsHandler()
-        Circuit.Components.ComponentBase.Handler = self.ComponentsHandler
-
+        self.Library = Circuit.CLibrary()
+        
         self.TmpComponents = []
 
     def SetMode(self, Mode, Advertise = True):
@@ -81,7 +78,12 @@ class GUI:
 
     def StartWire(self):
         self.ClearTmpComponent()
-        self.TmpComponents.append(Circuit.Components.Wire(self.Cursor))
+        self.TmpComponents.append(self.Library.IO.Wire(self.Cursor))
+
+    def StartComponent(self, CClass):
+        self.ClearTmpComponent()
+        self.TmpComponents.append(CClass(self.Cursor))
+        self.Draw()
 
     def ClearTmpComponent(self):
         while self.TmpComponents:
@@ -175,21 +177,26 @@ class GUI:
 
     def DefineKeys(self):
         Controls = Params.GUI.Controls
-        self.KeysFuctionsDict = {
-            Controls.Close  :lambda key, mod: self.Close(0),
-            Controls.Restart:lambda key, mod: self.Close(1),
-            Controls.Rotate :lambda key, mod: self.Rotate(mod),
-            Controls.Switch :lambda key, mod: self.Switch(),
-            Controls.Set    :lambda key, mod: self.Set(),
-            Controls.Connect:lambda key, mod: self._ToggleConnexion(),
-        }
-        for Key in Controls.Moves:
-            self.KeysFuctionsDict[Key] = lambda key, mod: self.OnKeyMove(Params.GUI.Controls.Moves[key], mod)
-        for Key in Controls.Modes:
-            self.KeysFuctionsDict[Key] = lambda key, mod: self.SetMode(Params.GUI.Controls.Modes[key])
-
+        self.KeysFuctionsDict = {}
         self.MainWindow.bind('<Key>', lambda e: self.ConsoleFilter(self.KeysFuctionsDict.get(e.keysym.lower(), Void), e.keysym.lower(), e.state))
-        #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__))
+
+        self.AddControlKey(Controls.Close,   lambda key, mod: self.Close(0))
+        self.AddControlKey(Controls.Restart, lambda key, mod: self.Close(1))
+        self.AddControlKey(Controls.Rotate,  lambda key, mod: self.Rotate(mod))
+        self.AddControlKey(Controls.Switch,  lambda key, mod: self.Switch())
+        self.AddControlKey(Controls.Set,     lambda key, mod: self.Set())
+        self.AddControlKey(Controls.Connect, lambda key, mod: self._ToggleConnexion())
+        for Key in Controls.Moves:
+            self.AddControlKey(Key, lambda key, mod: self.OnKeyMove(Params.GUI.Controls.Moves[key], mod))
+        for Key in Controls.Modes:
+            self.AddControlKey(Key, lambda key, mod: self.SetMode(Params.GUI.Controls.Modes[key]))
+
+        #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__)) # Override to check key value
+
+    def AddControlKey(self, Key, Callback):
+        if Key in self.KeysFuctionsDict:
+            raise ValueError(f"Used key : {Key}")
+        self.KeysFuctionsDict[Key] = Callback
 
     def ConsoleFilter(self, Callback, Symbol, Modifier):
         if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5'): # Hardcoded so far, should be taken from Params as well
@@ -215,10 +222,10 @@ class GUI:
 
     def SetWireMode(self, mode=None):
         if mode is None:
-            mode = 1-Circuit.Components.Wire.BuildMode
+            mode = 1-self.Library.IO.Wire.BuildMode
         self.WireButtons[mode].configure(background = Colors.GUI.pressed)
         self.WireButtons[1-mode].configure(background = Colors.GUI.bg)
-        Circuit.Components.Wire.BuildMode = mode
+        self.Library.IO.Wire.BuildMode = mode
         if self.Mode == Params.GUI.Modes.Wire:
             self.TmpComponents[0].Update()
             self.Draw()
@@ -274,7 +281,7 @@ class GUI:
 
         self.MainFrame.Board.View.AdvertiseChild(self.DisplayCanvas.get_tk_widget(), "Plot")
         self.MainFrame.Board.View.Plot.grid(row = 0, column = 0)
-        Circuit.Components.ComponentBase.Board = self.DisplayAx
+        self.Library.ComponentBase.Board = self.DisplayAx
 
     def Draw(self):
         self.DisplayFigure.canvas.draw()
@@ -309,6 +316,18 @@ class GUI:
         self.MainFrame.Console.RemoveDefaultName()
         self.MainFrame.Console.AdvertiseChild(ConsoleInstance, "ConsoleInstance")
         ConsoleInstance.text.bind('<Button-1>', lambda e:self.SetMode(Params.GUI.Modes.Console, Advertise = False))
+
+    def LoadLibraryGUI(self):
+        for GName in self.Library.Groups:
+            Group = self.Library.__dict__[GName]
+            GroupFrame = self.MainFrame.Library.AddFrame(GName, Side = Tk.TOP, NameDisplayed = True)
+            for CName in Group.Components:
+                Component = Group.__dict__[CName]
+                GroupFrame.AddWidget(Tk.Button, f"{GName}.{CName}", text = CName, height = Params.GUI.Library.ComponentHeight, command = lambda CClass = Component: self.StartComponent(CClass))
+                if CName in Params.GUI.Controls.Components:
+                    self.AddControlKey(Params.GUI.Controls.Components[CName], lambda key, mod, CClass = Component: self.StartComponent(CClass))
+# (Tk.Button, "ToggleConnexion", image=self._Images['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self._ToggleConnexion())
+            
 
     def _ToggleConnexion(self):
         self.ComponentsHandler.ToggleConnexion(self.Cursor)
@@ -361,13 +380,14 @@ class SFrame:
                 kwargs["fill"] = Tk.BOTH
             NewFrame.frame.pack(side = self.Side, **kwargs)
         NewFrame.AddWidget(Tk.Label, "Name", 0, 0, text = Name)
+        return NewFrame
 
     def RemoveDefaultName(self):
         if "Name" in self.Children and not self.NameDisplayed:
             self.Children["Name"].destroy()
             del self.Children["Name"]
 
-    def AddWidget(self, WidgetClass, Name = "", row=None, column=None, **kwargs):
+    def AddWidget(self, WidgetClass, Name = "", row=None, column=None, Sticky = True, **kwargs):
         self.RemoveDefaultName()
 
         if Name != "" and Name in self.Children:
@@ -375,12 +395,17 @@ class SFrame:
         NewWidget = WidgetClass(self.frame, **kwargs)
         self.Children[Name] = NewWidget
         self.__dict__[Name] = NewWidget
+        kwargs = {}
         if self.Side is None:
+            if Sticky:
+                kwargs["sticky"] = Tk.NSEW
             if row is None or column is None:
                 raise Exception(f"Frame {self.Name} must be packed to omit location when adding children")
             NewWidget.grid(row = row, column = column)
         else:
-            NewWidget.pack(side  = self.Side)
+            if Sticky:
+                kwargs["fill"] = Tk.BOTH
+            NewWidget.pack(side  = self.Side, **kwargs)
         return NewWidget
 
 if __name__ == '__main__':
