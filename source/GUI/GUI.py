@@ -20,30 +20,11 @@ class GUI:
         self.MainWindow = Tk.Tk()
         self.MainWindow.title('Logic Gates Simulator')
 
-        self._Images = {}
-    
         self.LoadBoardData()
-        self.DefineKeys()
 
-        self.MainFrame = SFrame(self.MainWindow)
-        self.MainFrame.AddFrame("TopPanel", 0, 0, columnspan = 3)
-        self.MainFrame.AddFrame("Library", 1, 0, Side = Tk.TOP)
-        self.MainFrame.AddFrame("Board", 1, 1, Side = Tk.TOP)
-        self.MainFrame.AddFrame("RightPanel", 1, 2, Side = Tk.TOP)
-        self.MainFrame.AddFrame("Console", 2, 0, columnspan = 3, Side = Tk.LEFT)
-
-        self.MainFrame.Board.AddFrame("Controls", Side = Tk.LEFT)
-        self.MainFrame.Board.AddFrame("View")
-        self.MainFrame.Board.AddFrame("DisplayToolbar", Side = Tk.LEFT)
-
-        self.LoadConsole()
-        self.LoadControls()
-        self.LoadView()
-        self.LoadDisplayToolbar()
-        self.LoadRightPanel()
+        self.LoadGUI()
         self.SetDefaultView()
 
-        self.LoadLibraryGUI()
 
         self.MainWindow.mainloop()
 
@@ -179,50 +160,10 @@ class GUI:
         self.DisplayAx.set_xlim(self.LeftBotLoc[0],self.LeftBotLoc[0]+self.Size)
         self.DisplayAx.set_ylim(self.LeftBotLoc[1],self.LeftBotLoc[1]+self.Size)
 
-    def DefineKeys(self):
-        Controls = Params.GUI.Controls
-        self.KeysFuctionsDict = {}
-        self.MainWindow.bind('<Key>', lambda e: self.ConsoleFilter(self.KeysFuctionsDict.get(e.keysym.lower(), Void), e.keysym.lower(), e.state))
-
-        self.AddControlKey(Controls.Close,   lambda key, mod: self.Close(0))
-        self.AddControlKey(Controls.Restart, lambda key, mod: self.Close(1))
-        self.AddControlKey(Controls.Rotate,  lambda key, mod: self.Rotate(mod))
-        self.AddControlKey(Controls.Switch,  lambda key, mod: self.Switch())
-        self.AddControlKey(Controls.Set,     lambda key, mod: self.Set())
-        self.AddControlKey(Controls.Connect, lambda key, mod: self._ToggleConnexion())
-        for Key in Controls.Moves:
-            self.AddControlKey(Key, lambda key, mod: self.OnKeyMove(Params.GUI.Controls.Moves[key], mod))
-        for Key in Controls.Modes:
-            self.AddControlKey(Key, lambda key, mod: self.SetMode(Params.GUI.Controls.Modes[key]))
-
-        #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__)) # Override to check key value
-
-    def AddControlKey(self, Key, Callback):
-        if Key in self.KeysFuctionsDict:
-            raise ValueError(f"Used key : {Key}")
-        self.KeysFuctionsDict[Key] = Callback
-
     def ConsoleFilter(self, Callback, Symbol, Modifier):
         if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5'): # Hardcoded so far, should be taken from Params as well
             return
         Callback(Symbol, Modifier)
-
-    def LoadControls(self):
-        self._Images['WSImage'] = Tk.PhotoImage(file="./images/WireStraight.png")
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireStraight", image=self._Images['WSImage'], height = 30, width = 30, command = lambda:self.SetWireBuildMode(0))
-        self._Images['WDImage'] = Tk.PhotoImage(file="./images/WireDiagonal.png")
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireDiagonal", image=self._Images['WDImage'], height = 30, width = 30, command = lambda:self.SetWireBuildMode(1))
-        self.WireButtons = (self.MainFrame.Board.Controls.WireStraight, self.MainFrame.Board.Controls.WireDiagonal)
-        self.SetWireBuildMode(Params.GUI.Behaviour.DefaultWireBuildMode)
-        self._Images['DotImage'] = Tk.PhotoImage(file="./images/Dot.png").subsample(10)
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexion", image=self._Images['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self._ToggleConnexion())
-
-        self.MainFrame.Board.Controls.AddWidget(ttk.Separator, orient = 'vertical')
-
-        self._Images['RLImage'] = Tk.PhotoImage(file="./images/RotateLeft.png").subsample(8)
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateLeft", image=self._Images['RLImage'], height = 30, width = 30, command = lambda:self.Rotate(0))
-        self._Images['RRImage'] = Tk.PhotoImage(file="./images/RotateRight.png").subsample(8)
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateRight", image=self._Images['RRImage'], height = 30, width = 30, command = lambda:self.Rotate(1))
 
     def SetWireBuildMode(self, mode=None):
         if mode is None:
@@ -270,6 +211,88 @@ class GUI:
         if self.TmpComponents:
             self.Draw()
 
+    def Draw(self):
+        self.MainFrame.Board.DisplayToolbar.Labels.ComponentLabel['text'] = self.CH.Repr(self.Cursor)
+        self.DisplayFigure.canvas.draw()
+
+    def _ToggleConnexion(self):
+        self.CH.ToggleConnexion(self.Cursor)
+        self.CH.MoveHighlight(self.Cursor)
+        self.Draw()
+
+    def LoadGUI(self):
+        self._Icons = {}
+    
+        self.LoadKeys()
+
+        self.MainFrame = SFrame(self.MainWindow)
+        self.MainFrame.AddFrame("TopPanel", 0, 0, columnspan = 3)
+        self.MainFrame.AddFrame("Library", 1, 0, Side = Tk.TOP)
+        self.MainFrame.AddFrame("Board", 1, 1, Side = Tk.TOP)
+        self.MainFrame.AddFrame("RightPanel", 1, 2, Side = Tk.TOP)
+        self.MainFrame.AddFrame("Console", 2, 0, columnspan = 3, Side = Tk.LEFT)
+
+        self.LoadConsole()
+        self.LoadBoard()
+        self.LoadRightPanel()
+        self.LoadLibraryGUI()
+
+    def LoadKeys(self):
+        Controls = Params.GUI.Controls
+        self.KeysFuctionsDict = {}
+        self.MainWindow.bind('<Key>', lambda e: self.ConsoleFilter(self.KeysFuctionsDict.get(e.keysym.lower(), Void), e.keysym.lower(), e.state))
+
+        self.AddControlKey(Controls.Close,   lambda key, mod: self.Close(0))
+        self.AddControlKey(Controls.Restart, lambda key, mod: self.Close(1))
+        self.AddControlKey(Controls.Rotate,  lambda key, mod: self.Rotate(mod))
+        self.AddControlKey(Controls.Switch,  lambda key, mod: self.Switch())
+        self.AddControlKey(Controls.Set,     lambda key, mod: self.Set())
+        self.AddControlKey(Controls.Connect, lambda key, mod: self._ToggleConnexion())
+        for Key in Controls.Moves:
+            self.AddControlKey(Key, lambda key, mod: self.OnKeyMove(Params.GUI.Controls.Moves[key], mod))
+        for Key in Controls.Modes:
+            self.AddControlKey(Key, lambda key, mod: self.SetMode(Params.GUI.Controls.Modes[key]))
+
+        #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__)) # Override to check key value
+
+    def AddControlKey(self, Key, Callback):
+        if Key in self.KeysFuctionsDict:
+            raise ValueError(f"Used key : {Key}")
+        self.KeysFuctionsDict[Key] = Callback
+
+    def LoadConsole(self):
+        #self.MainFrame.Console.AddWidget(Console.ConsoleWidget, "Console", _locals=locals(), exit_callback=self.MainWindow.destroy)
+        ConsoleInstance = ConsoleWidget(self.MainFrame.Console.frame, locals(), self.MainWindow.destroy)
+        ConsoleInstance.pack(fill=Tk.BOTH, expand=True)
+        self.MainFrame.Console.RemoveDefaultName()
+        self.MainFrame.Console.AdvertiseChild(ConsoleInstance, "ConsoleInstance")
+        ConsoleInstance.text.bind('<Button-1>', lambda e:self.SetMode(Params.GUI.Modes.Console, Advertise = False))
+
+    def LoadBoard(self):
+        self.MainFrame.Board.AddFrame("Controls", Side = Tk.LEFT)
+        self.MainFrame.Board.AddFrame("View")
+        self.MainFrame.Board.AddFrame("DisplayToolbar", Side = Tk.LEFT)
+        self.LoadControls()
+        self.LoadView()
+        self.LoadDisplayToolbar()
+
+    def LoadControls(self):
+        self._Icons['WSImage'] = Tk.PhotoImage(file="./images/WireStraight.png")
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireStraight", image=self._Icons['WSImage'], height = 30, width = 30, command = lambda:self.SetWireBuildMode(0))
+        self._Icons['WDImage'] = Tk.PhotoImage(file="./images/WireDiagonal.png")
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireDiagonal", image=self._Icons['WDImage'], height = 30, width = 30, command = lambda:self.SetWireBuildMode(1))
+        self.WireButtons = (self.MainFrame.Board.Controls.WireStraight, self.MainFrame.Board.Controls.WireDiagonal)
+        self.SetWireBuildMode(Params.GUI.Behaviour.DefaultWireBuildMode)
+        self._Icons['DotImage'] = Tk.PhotoImage(file="./images/Dot.png").subsample(10)
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexion", image=self._Icons['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self._ToggleConnexion())
+
+        self.MainFrame.Board.Controls.AddWidget(ttk.Separator, orient = 'vertical')
+
+        self._Icons['RLImage'] = Tk.PhotoImage(file="./images/RotateLeft.png").subsample(8)
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateLeft", image=self._Icons['RLImage'], height = 30, width = 30, command = lambda:self.Rotate(0))
+        self._Icons['RRImage'] = Tk.PhotoImage(file="./images/RotateRight.png").subsample(8)
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateRight", image=self._Icons['RRImage'], height = 30, width = 30, command = lambda:self.Rotate(1))
+
     def LoadView(self):
         self.DisplayFigure = matplotlib.figure.Figure(figsize=Params.GUI.View.FigSize, dpi=Params.GUI.View.DPI)
         self.DisplayFigure.subplots_adjust(0., 0., 1., 1.)
@@ -300,10 +323,6 @@ class GUI:
         self.MainFrame.Board.View.Plot.grid(row = 0, column = 0)
         self.Library.ComponentBase.Board = self.DisplayAx
 
-    def Draw(self):
-        self.MainFrame.Board.DisplayToolbar.Labels.ComponentLabel['text'] = self.CH.Repr(self.Cursor)
-        self.DisplayFigure.canvas.draw()
-
     def LoadDisplayToolbar(self):
         self.MainFrame.Board.DisplayToolbar.AddFrame("Buttons", Side = Tk.TOP, Border = False)
         self.MainFrame.Board.DisplayToolbar.AddFrame("Labels", Side = Tk.TOP, Border = False)
@@ -327,13 +346,8 @@ class GUI:
         self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "CursorLabel", text = "")
         self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "ComponentLabel", text = "")
 
-    def LoadConsole(self):
-        #self.MainFrame.Console.AddWidget(Console.ConsoleWidget, "Console", _locals=locals(), exit_callback=self.MainWindow.destroy)
-        ConsoleInstance = ConsoleWidget(self.MainFrame.Console.frame, locals(), self.MainWindow.destroy)
-        ConsoleInstance.pack(fill=Tk.BOTH, expand=True)
-        self.MainFrame.Console.RemoveDefaultName()
-        self.MainFrame.Console.AdvertiseChild(ConsoleInstance, "ConsoleInstance")
-        ConsoleInstance.text.bind('<Button-1>', lambda e:self.SetMode(Params.GUI.Modes.Console, Advertise = False))
+    def LoadRightPanel(self):
+        pass
 
     def LoadLibraryGUI(self):
         for GName in self.Library.Groups:
@@ -346,11 +360,6 @@ class GUI:
                     Add = f' ({Params.GUI.Controls.Components[CName]})'
                     self.AddControlKey(Params.GUI.Controls.Components[CName], lambda key, mod, CClass = Component: self.StartComponent(CClass))
                 GroupFrame.AddWidget(Tk.Button, f"{GName}.{CName}", text = CName+Add, height = Params.GUI.Library.ComponentHeight, command = lambda CClass = Component: self.StartComponent(CClass))
-
-    def _ToggleConnexion(self):
-        self.CH.ToggleConnexion(self.Cursor)
-        self.CH.MoveHighlight(self.Cursor)
-        self.Draw()
 
     def Close(self, Restart = False):
         self.MainWindow.quit()
