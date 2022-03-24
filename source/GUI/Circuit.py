@@ -253,3 +253,6 @@ class CLibrary:
     def AddGroup(self, Group):
         self.__dict__[Group.Name] = Group
         self.Groups.append(Group.Name)
+
+    def IsWire(self, C):
+        return isinstance(C, Components.Wire)

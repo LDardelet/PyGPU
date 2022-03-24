@@ -61,6 +61,7 @@ class GUI:
         self.UpdateModePlot()
 
     def StartWire(self):
+        LogWarning("Deprecated")
         self.ClearTmpComponent()
         self.TmpComponents.append(self.Library.IO.Wire(self.Cursor, self.Rotation))
         self.Draw()
@@ -171,7 +172,7 @@ class GUI:
         self.WireButtons[mode].configure(background = Colors.GUI.pressed)
         self.WireButtons[1-mode].configure(background = Colors.GUI.bg)
         self.Library.IO.Wire.BuildMode = mode
-        if self.Mode == Params.GUI.Modes.Wire:
+        if self.Mode == Params.GUI.Modes.Build and self.Library.IsWire(self.TmpComponents[0]):
             self.TmpComponents[0].UpdateLocation()
             self.Draw()
 
@@ -201,7 +202,7 @@ class GUI:
                 self.StartWire()
 
     def Switch(self):
-        if self.Mode == Params.GUI.Modes.Wire:
+        if self.Mode == Params.GUI.Modes.Build and self.Library.IsWire(self.TmpComponents[0]):
             self.SetWireBuildMode()
 
     def Rotate(self, var):
