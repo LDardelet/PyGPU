@@ -26,10 +26,10 @@ class GUI:
         self.DefineKeys()
 
         self.MainFrame = SFrame(self.MainWindow)
-        self.MainFrame.AddFrame("Toolbar", 0, 0, columnspan = 3)
+        self.MainFrame.AddFrame("TopPanel", 0, 0, columnspan = 3)
         self.MainFrame.AddFrame("Library", 1, 0, Side = Tk.TOP)
         self.MainFrame.AddFrame("Board", 1, 1, Side = Tk.TOP)
-        self.MainFrame.AddFrame("Parameters", 1, 2, Side = Tk.TOP)
+        self.MainFrame.AddFrame("RightPanel", 1, 2, Side = Tk.TOP)
         self.MainFrame.AddFrame("Console", 2, 0, columnspan = 3, Side = Tk.LEFT)
 
         self.MainFrame.Board.AddFrame("Controls", Side = Tk.LEFT)
@@ -40,6 +40,7 @@ class GUI:
         self.LoadControls()
         self.LoadView()
         self.LoadDisplayToolbar()
+        self.LoadRightPanel()
         self.SetDefaultView()
 
         self.LoadLibraryGUI()
@@ -48,13 +49,14 @@ class GUI:
 
     def LoadBoardData(self):
         self.Mode = Params.GUI.Modes.Default
+        self.Rotation = 0
 
-        self.ComponentsHandler = Circuit.ComponentsHandler()
+        self.CH = Circuit.ComponentsHandler()
         self.Library = Circuit.CLibrary()
         
         self.TmpComponents = []
 
-    def SetMode(self, Mode, Advertise = True):
+    def SetMode(self, Mode, Advertise = False):
         self.Mode, Change = Mode, (self.Mode != Mode)
         if Advertise and Change:
             Log(f"Mode {Params.GUI.ModesNames[self.Mode]}")
@@ -63,6 +65,7 @@ class GUI:
             if Params.GUI.Behaviour.AutoStartWire:
                 self.StartWire()
             if not Change:
+                self.Draw()
                 return
         if self.Mode == Params.GUI.Modes.Console:
             self.MainFrame.Console.ConsoleInstance.text.see(Tk.END)
@@ -78,11 +81,12 @@ class GUI:
 
     def StartWire(self):
         self.ClearTmpComponent()
-        self.TmpComponents.append(self.Library.IO.Wire(self.Cursor))
+        self.TmpComponents.append(self.Library.IO.Wire(self.Cursor, self.Rotation))
+        self.Draw()
 
     def StartComponent(self, CClass):
-        self.ClearTmpComponent()
-        self.TmpComponents.append(CClass(self.Cursor))
+        self.SetMode(Params.GUI.Modes.Build)
+        self.TmpComponents.append(CClass(self.Cursor, self.Rotation))
         self.Draw()
 
     def ClearTmpComponent(self):
@@ -92,7 +96,7 @@ class GUI:
     def UpdateModePlot(self):
         if self.Mode == Params.GUI.Modes.Default or self.Mode == Params.GUI.Modes.Console:
             Color = Colors.Components.default
-        else:
+        elif self.Mode == Params.GUI.Modes.Wire or self.Mode == Params.GUI.Modes.Build:
             Color = Colors.Components.build
         self.Plots['Cursor'].set_color(Color)
         if Params.GUI.View.CursorLinesWidth:
@@ -115,16 +119,16 @@ class GUI:
 
     def OnMove(self):
         self.UpdateCursor()
-        self.ComponentsHandler.MoveHighlight(self.Cursor)
         self.CheckBoardLimits()
+        self.CH.MoveHighlight(self.Cursor)
         for Component in self.TmpComponents:
             Component.Drag(self.Cursor)
         if self.Mode == Params.GUI.Modes.Default:
             self.CheckConnexionAvailable()
-        self.DisplayFigure.canvas.draw()
+        self.Draw()
 
     def CheckConnexionAvailable(self):
-        Column = self.ComponentsHandler.Map[self.Cursor[0], self.Cursor[1], :]
+        Column = self.CH.Map[self.Cursor[0], self.Cursor[1], :]
         if not Column[-1] and (Column[:-1] != 0).sum() > 3:
             self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.NORMAL)
         else:
@@ -133,16 +137,17 @@ class GUI:
     def SetDefaultView(self):
         Log("Setting default view")
         self.Margin = 1
-        if (self.ComponentsHandler.ComponentsLimits == 0).all():
+        if (self.CH.ComponentsLimits == 0).all():
             self.Size = Params.GUI.View.Zooms[0]
         else:
-            self.Size = max(100, (self.ComponentsHandler.ComponentsLimits[:,1] - self.ComponentsHandler.ComponentsLimits[:,0]).max())
-        self.Cursor = self.ComponentsHandler.ComponentsLimits.mean(axis = 0).astype(int)
+            self.Size = max(Params.GUI.View.Zooms[0], (self.CH.ComponentsLimits[:,1] - self.CH.ComponentsLimits[:,0]).max())
+        self.Cursor = self.CH.ComponentsLimits.mean(axis = 0).astype(int)
         self.LeftBotLoc = self.Cursor - (self.Size // 2)
         
         self.SetBoardLimits()
         self.UpdateCursor()
-        self.DisplayFigure.canvas.draw()
+        self.Draw()
+
     def NextZoom(self):
         self.DisplayToolbar.children['!checkbutton2'].deselect()
         if self.Size not in Params.GUI.View.Zooms:
@@ -159,7 +164,6 @@ class GUI:
             self.Plots['HCursor'].set_data([-Params.Board.Max, Params.Board.Max], [self.Cursor[1], self.Cursor[1]])
             self.Plots['VCursor'].set_data([self.Cursor[0], self.Cursor[0]], [-Params.Board.Max, Params.Board.Max])
         self.MainFrame.Board.DisplayToolbar.Labels.CursorLabel['text'] = f"Cursor : {self.Cursor.tolist()}"
-        self.MainFrame.Board.DisplayToolbar.Labels.ComponentLabel['text'] = self.ComponentsHandler.Repr(self.Cursor)
 
     def CheckBoardLimits(self):
         Displacement = np.maximum(0, self.Cursor + self.Margin - (self.LeftBotLoc + self.Size))
@@ -205,11 +209,11 @@ class GUI:
 
     def LoadControls(self):
         self._Images['WSImage'] = Tk.PhotoImage(file="./images/WireStraight.png")
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireStraight", image=self._Images['WSImage'], height = 30, width = 30, command = lambda:self.SetWireMode(0))
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireStraight", image=self._Images['WSImage'], height = 30, width = 30, command = lambda:self.SetWireBuildMode(0))
         self._Images['WDImage'] = Tk.PhotoImage(file="./images/WireDiagonal.png")
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireDiagonal", image=self._Images['WDImage'], height = 30, width = 30, command = lambda:self.SetWireMode(1))
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireDiagonal", image=self._Images['WDImage'], height = 30, width = 30, command = lambda:self.SetWireBuildMode(1))
         self.WireButtons = (self.MainFrame.Board.Controls.WireStraight, self.MainFrame.Board.Controls.WireDiagonal)
-        self.SetWireMode(0)
+        self.SetWireBuildMode(Params.GUI.Behaviour.DefaultWireBuildMode)
         self._Images['DotImage'] = Tk.PhotoImage(file="./images/Dot.png").subsample(10)
         self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexion", image=self._Images['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self._ToggleConnexion())
 
@@ -220,34 +224,47 @@ class GUI:
         self._Images['RRImage'] = Tk.PhotoImage(file="./images/RotateRight.png").subsample(8)
         self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateRight", image=self._Images['RRImage'], height = 30, width = 30, command = lambda:self.Rotate(1))
 
-    def SetWireMode(self, mode=None):
+    def SetWireBuildMode(self, mode=None):
         if mode is None:
             mode = 1-self.Library.IO.Wire.BuildMode
         self.WireButtons[mode].configure(background = Colors.GUI.pressed)
         self.WireButtons[1-mode].configure(background = Colors.GUI.bg)
         self.Library.IO.Wire.BuildMode = mode
         if self.Mode == Params.GUI.Modes.Wire:
-            self.TmpComponents[0].Update()
+            self.TmpComponents[0].UpdateLocation()
             self.Draw()
 
     def Set(self):
         if self.Mode == Params.GUI.Modes.Wire:
             if self.TmpComponents:
-                ClosesCircuit = self.ComponentsHandler.HasItem(self.Cursor)
+                ClosesCircuit = self.CH.HasItem(self.Cursor)
                 if self.TmpComponents[0].Fix(True):
+                    self.CH.MoveHighlight(self.Cursor)
                     self.TmpComponents.pop(0)
                     if Params.GUI.Behaviour.AutoContinueWire and not (ClosesCircuit and Params.GUI.Behaviour.StopWireOnJoin):
                         self.StartWire()
-                    self.Draw()
+                    else:
+                        self.Draw()
             else:
                 self.StartWire()
-                self.Draw()
+        elif self.Mode == Params.GUI.Modes.Build:
+            if self.TmpComponents:
+                if self.TmpComponents[0].Fix(True):
+                    self.CH.MoveHighlight(self.Cursor)
+                    PreviousCComp = self.TmpComponents.pop(0).__class__
+                    if Params.GUI.Behaviour.AutoContinueComponent:
+                        self.StartComponent(PreviousCComp)
+        elif self.Mode == Params.GUI.Modes.Default:
+            if self.CH.Wired(self.Cursor):
+                self.SetMode(Params.GUI.Modes.Wire)
+                self.StartWire()
 
     def Switch(self):
         if self.Mode == Params.GUI.Modes.Wire:
-            self.SetWireMode()
+            self.SetWireBuildMode()
 
     def Rotate(self, var):
+        self.Rotation = (self.Rotation + 1) & 0b11
         for Component in self.TmpComponents:
             Component.Rotate()
         if self.TmpComponents:
@@ -284,6 +301,7 @@ class GUI:
         self.Library.ComponentBase.Board = self.DisplayAx
 
     def Draw(self):
+        self.MainFrame.Board.DisplayToolbar.Labels.ComponentLabel['text'] = self.CH.Repr(self.Cursor)
         self.DisplayFigure.canvas.draw()
 
     def LoadDisplayToolbar(self):
@@ -323,14 +341,16 @@ class GUI:
             GroupFrame = self.MainFrame.Library.AddFrame(GName, Side = Tk.TOP, NameDisplayed = True)
             for CName in Group.Components:
                 Component = Group.__dict__[CName]
-                GroupFrame.AddWidget(Tk.Button, f"{GName}.{CName}", text = CName, height = Params.GUI.Library.ComponentHeight, command = lambda CClass = Component: self.StartComponent(CClass))
+                Add = ''
                 if CName in Params.GUI.Controls.Components:
+                    Add = f' ({Params.GUI.Controls.Components[CName]})'
                     self.AddControlKey(Params.GUI.Controls.Components[CName], lambda key, mod, CClass = Component: self.StartComponent(CClass))
-# (Tk.Button, "ToggleConnexion", image=self._Images['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self._ToggleConnexion())
-            
+                GroupFrame.AddWidget(Tk.Button, f"{GName}.{CName}", text = CName+Add, height = Params.GUI.Library.ComponentHeight, command = lambda CClass = Component: self.StartComponent(CClass))
 
     def _ToggleConnexion(self):
-        self.ComponentsHandler.ToggleConnexion(self.Cursor)
+        self.CH.ToggleConnexion(self.Cursor)
+        self.CH.MoveHighlight(self.Cursor)
+        self.Draw()
 
     def Close(self, Restart = False):
         self.MainWindow.quit()

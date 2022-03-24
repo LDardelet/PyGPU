@@ -12,43 +12,54 @@ class ComponentsHandler:
 
         self.MaxValue = 0
         self.Components = {}
+        self.Casings = {}
         self.ComponentsLimits = np.array([[0,0], [0.,0]])
         self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 9), dtype = int)
 
-        self.HighlightedGroup = None
+        self.Highlighed = None
         self.Groups = {} # Groups shre wire transmissions
 
-    def Register(self, Locations, NewComponent, NewConnexionsLocations):
-        Values = self.Map[Locations[:,0], Locations[:,1], Locations[:,2]]
-        if (Values != 0).any(): # TODO : Ask for wire bridges
-            LogWarning(f"Unable to register the new component, due to positions {Locations[np.where(Values != 0), :].tolist()}")
+    def Register(self, NewComponent, MustCheck = True):
+        if MustCheck and not self.CheckRoom(NewComponent):
+            LogWarning(f"Unable to register the new component, due to position conflicts")
             return False
 
-        self.SetComponent(NewComponent, Locations)
-        for Location in Locations:
-            ConnID = self.Map[Location[0],Location[1],-1]
+        self.SetComponent(NewComponent)
+        for x,y,_ in NewComponent.AdvertisedLocations:
+            ConnID = self.Map[x,y,-1]
+            if ConnID == NewComponent.ID: # Need to check for location forbidden connexions
+                continue
             if ConnID and self.Components[ConnID].Displayed: # Start by linking existing connexions on the advertized locations
-                self.Components[ConnID].Update(self.Map[Location[0],Location[1],:])
+                self.Components[ConnID].Update(self.Map[x,y,:])
                 self.AddLink(NewComponent.ID, ConnID)
 
-        for Location in NewConnexionsLocations: # Add automatically created connexions, in particular to existing hidden connexions
-            ConnID = self.Map[Location[0],Location[1],-1]
+        for x,y in NewComponent.AdvertisedConnexions: # Add automatically created connexions, in particular to existing hidden connexions
+            ConnID = self.Map[x,y,-1]
+            if ConnID == NewComponent.ID: # Need to check for location forbidden connexions
+                continue
             if ConnID:
-                if not self.Components[ConnID].LinkedTo(NewComponent.ID):# If NewConnexionsLocations should already be within Locations, hidden connexions would have been avoided due to previous method
-                    self.Components[ConnID].Update(self.Map[Location[0],Location[1],:])
+                if not self.Components[ConnID].LinkedTo(NewComponent.ID):# If NewConnexion should already be within NewLocations, hidden connexions would have been avoided due to previous method
+                    self.Components[ConnID].Update(self.Map[x,y,:])
                     self.AddLink(NewComponent.ID, ConnID)
             else:
-                self.AddConnexion(Location) # If not, we create it
+                self.AddConnexion((x,y)) # If not, we create it
         return True
 
-    def SetComponent(self, Component, AdvertisedLocations): # Sets the ID of a component and stores it. Does not handle links.
+    def CheckRoom(self, NewComponent):
+        NewLocations = NewComponent.AdvertisedLocations
+        Values = self.Map[NewLocations[:,0], NewLocations[:,1], NewLocations[:,2]]
+        return (Values == 0).all() # TODO : Ask for wire bridges
+            #LogWarning(f"Unable to register the new component, due to positions {NewLocations[np.where(Values != 0), :].tolist()}")
+
+    def SetComponent(self, Component): # Sets the ID of a component and stores it. Does not handle links.
         self.MaxValue += 1
         Component.ID = self.MaxValue
         self.Components[Component.ID] = Component
         Component.Group = GroupClass(Component)
-        Component.AdvertisedLocations = np.array(AdvertisedLocations)
-        for x, y, theta in AdvertisedLocations:
+        for x, y, theta in Component.AdvertisedLocations:
             self.Map[x,y,theta] = Component.ID
+        if isinstance(Component, Components.CasedComponent):
+            self.Casings[Component.ID] = Component
 
     def DestroyComponent(self, ID): # Completely removes the component by its ID. Does not handle links.
         Component = self.Components.pop(ID)
@@ -57,7 +68,7 @@ class ComponentsHandler:
         Component.destroy()
 
     def ToggleConnexion(self, Location):
-        if self.Map[Location[0], Location[1],-1]:
+        if self.Map[Location[0], Location[1],-1] and isinstance(self.Components[self.Map[Location[0], Location[1],-1]], Components.Connexion): # Second check for pin bases
             self.RemoveConnexion(Location)
         else:
             self.AddConnexion(Location)
@@ -67,7 +78,7 @@ class ComponentsHandler:
             LogError(f"Connexion at {Location} already exists")
             return
         NewConnexion = Components.Connexion(Location, Column)
-        self.SetComponent(NewConnexion, ((Location[0], Location[1], -1),))
+        self.SetComponent(NewConnexion)
         for ID in Column[:-1]:
             if ID:
                 if NewConnexion.Group is None:
@@ -108,39 +119,47 @@ class ComponentsHandler:
 
     def MoveHighlight(self, Location):
         Groups = list({self.Components[ID].Group for ID in self.Map[Location[0], Location[1],:-1] if ID})
-        if self.HighlightedGroup and (not Groups or self.HighlightedGroup != Groups[0]):
-            self.HighlightedGroup.Highlight(False)
-            self.HighlightedGroup = None
         if Groups:
-            self.HighlightedGroup = Groups[0]
-            self.HighlightedGroup.Highlight(True)
+            return self.SwitchHighlight(Groups[0])
+        else:
+            for Component in self.Casings.values():
+                if Component.Contains(Location):
+                    return self.SwitchHighlight(Component)
+        self.SwitchHighlight(None)
+
+    def SwitchHighlight(self, Item):
+        if Item == self.Highlighed:
+            return
+        if not self.Highlighed is None:
+            self.Highlighed.Highlight(False)
+        self.Highlighed = Item
+        if not Item is None:
+            self.Highlighed.Highlight(True)
 
     def Repr(self, Location):
         NWires = 0
         Data = []
         Keypoint = False
         Column = self.Map[Location[0], Location[1],:]
+
+        Groups = {}
         for ID in Column[:-1]:
             if ID:
                 Component = self.Components[ID]
-                if type(Component) == Components.Wire:
-                    NWires += 1
+                if Component.Group in Groups:
+                    Groups[Component.Group].add(Component)
                 else:
-                    Keypoint = True
-                    Data.append(Component.CName)
-        if not Data and NWires == 0:
+                    Groups[Component.Group] = {Component}
+        if not Groups:
             return ""
 
-        if NWires:
-            Data = [Components.Wire.CName+'s'*(NWires >= 3)] + Data
-        if Keypoint or (NWires >= 3 and Column[-1]):
-            Add = " (connected)"
-        elif not Keypoint and (NWires >= 3 and not Column[-1]):
-            Add = " (isolated)"
-        else:
-            Add = ""
-        return ', '.join(Data) + Add
+        return ', '.join([f'Group {Group.ID} : '+ ', '.join([str(Component) for Component in Components]) for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
 
+    def Wired(self, Location):
+        for ID in self.Map[Location[0], Location[1], :8]:
+            if ID and isinstance(self.Components[ID], Components.Wire):
+                return True
+        return False
     def HasItem(self, Location):
         return self.Map[Location[0], Location[1], :8].any()
 
@@ -203,14 +222,14 @@ class CGroup:
 
     def AddComponentClass(self, Name, Values):
         try:
-            West, East, North, South, Callback, Schematics, ForceWidth, ForceHeight = Values
+            West, East, North, South, Callback, Schematics, ForceWidth, ForceHeight, Symbol = Values
         except ValueError:
             LogWarning(f"Unable to load component {Name} from its definition")
             return
         self.__dict__[Name] = type(Name, 
-                                   (Components.Component, ), 
+                                   (Components.CasedComponent, ), 
                                    {
-                                       '__init__': Components.Component.__init__,
+                                       '__init__': Components.CasedComponent.__init__,
                                        'CName': Name,
                                        'West' : West,
                                        'East' : East,
@@ -220,12 +239,13 @@ class CGroup:
                                        'Schematics' : Schematics,
                                        'ForceWidth' :ForceWidth,
                                        'ForceHeight':ForceHeight,
+                                       'Symbol':Symbol,
                                    })
 class CLibrary:
     ComponentBase = Components.ComponentBase
     def __init__(self):
         self.Groups = []
-        self.AddGroup(CGroup('Basic', DefaultLibrary.BasicGates.Definitions))
+        self.AddGroup(CGroup('Basic gates', DefaultLibrary.BasicGates.Definitions))
         self.AddGroup(CGroup('IO', {
             'Wire': Components.Wire,
         }))

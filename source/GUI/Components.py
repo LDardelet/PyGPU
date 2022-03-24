@@ -12,15 +12,13 @@ class ComponentBase:
     DefaultMarkersize = 0
     RotationAllowed = True
     CName = None
-    def __init__(self, Location):
+    def __init__(self, Location=None, Rotation=None):
         if not Location is None: # Happend for a child component, in which case both values are defined by the parents
             self.Location = np.array(Location)
-            self.Rotation = 0
-            self.AdvertisedLocations = set()
-            self.ID = None
+            self.Rotation = Rotation
 
         self.Fixed = False
-
+        self.ID = None
         self.Highlighted = False
         self.Plots = []
         self.HighlightPlots = []
@@ -48,10 +46,23 @@ class ComponentBase:
             Plot.set_linewidth(self.DefaultLinewidth*Factor)
             Plot.set_markersize(self.DefaultMarkersize*Factor)
 
-    def Fix(self, var):
+    def Fix(self, var, MustCheck = True):
         if var == self.Fixed:
-            return
-        self.Fixed = var
+            if self.Fixed:
+                raise ValueError("Component already fixed")
+            else:
+                raise ValueError("Component already unfixed")
+        if var:
+            if self.Handler.Register(self, MustCheck):
+                self.Fixed = True
+                self.SetColor()
+                return True
+            else:
+                return False
+        else:
+            raise NotImplementedError
+
+    def SetColor(self):
         if self.Fixed:
             for Plot in self.Plots:
                 Plot.set_color(Colors.Components.fixed)
@@ -75,6 +86,15 @@ class ComponentBase:
         pass
 
     @property
+    def AdvertisedLocations(self):
+        return np.zeros((0,3), dtype = int)
+    @property
+    def AdvertisedConnexions(self):
+        return np.zeros((0,2), dtype = int)
+    @property
+    def Size(self):
+        return self.AdvertisedLocations.shape[0]
+    @property
     def Extent(self):
         return (self.AdvertisedLocations[:,0].min(), self.AdvertisedLocations[:,1].min(), self.AdvertisedLocations[:,0].max(), self.AdvertisedLocations[:,1].max())
 
@@ -83,10 +103,10 @@ class ComponentBase:
             plot.remove()
 
     def __repr__(self):
-        return f"{self.__class__.__name__} at {self.Location}"
+        return f"{self.CName} at {self.Location}"
 
-class Component(ComponentBase): # Template to create any type of component
-    DefaultLinewidth = Params.GUI.PlotsWidths.Component
+class CasedComponent(ComponentBase): # Template to create any type of component
+    DefaultLinewidth = Params.GUI.PlotsWidths.Casing
     West = ''
     East = ''
     North= ''
@@ -95,8 +115,9 @@ class Component(ComponentBase): # Template to create any type of component
     Schematics = None
     ForceWidth = None
     ForceHeight = None
-    def __init__(self, Location):
-        ComponentBase.__init__(self, Location)
+    Symbol = ''
+    def __init__(self, Location, Rotation):
+        ComponentBase.__init__(self, Location, Rotation)
         if self.Callback is None:
             if self.Schematics is None:
                 raise ValueError("Component must have either a callback or an inner schematics to run")
@@ -118,9 +139,9 @@ class Component(ComponentBase): # Template to create any type of component
         self.LocToSWOffset = -np.array([self.Width//2, self.Height//2])
 
         for Xs, Ys in self.CasingSides:
-            self.plot(Xs, Ys, color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Component, linewidth = self.DefaultLinewidth)
+            self.plot(Xs, Ys, color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = self.DefaultLinewidth)
 
-        self.text(*self.Location, s = self.CName, color = Colors.Components.build, va = 'center', ha = 'center', rotation = ('vertical', 'horizontal')[self.Width > 10])
+        self.text(*self.TextLocation, s = (self.CName, self.Symbol)[bool(self.Symbol)], color = Colors.Components.build, va = 'center', ha = 'center', rotation = self.TextRotation)
 
         self.Pins = {}
         for nPin, PinName in enumerate(self.West):
@@ -132,27 +153,52 @@ class Component(ComponentBase): # Template to create any type of component
         for nPin, PinName in enumerate(self.North):
             Offset = self.LocToSWOffset + np.array([1+nPin, self.Height])
             self.Pins[f"N.{nPin}"] = ComponentPin(self, Offset, 'N', PinName)
-        for nPin, PinName in enumerate(self.East):
+        for nPin, PinName in enumerate(self.South):
             Offset = self.LocToSWOffset + np.array([1+nPin, 0])
             self.Pins[f"S.{nPin}"] = ComponentPin(self, Offset, 'S', PinName)
 
-    def Fix(self, var):
-        ComponentBase.Fix(var)
+    def Fix(self, var, MustCheck = True): # Must override to take children into account. 
+        if not self.Handler.CheckRoom(self):
+            LogWarning(f"Unable to register the new component, due to casing location")
+            return False
+        for PName, Pin in self.Pins.items():
+            if not self.Handler.CheckRoom(Pin): # We check first all locations
+                LogWarning(f"Unable to register the new component, due to pin {PName} location")
+                return False
+        ComponentBase.Fix(self, var, MustCheck = False)
         for Pin in self.Pins.values():
-            Pin.Fix(var)
+            Pin.Fix(var, MustCheck = False)
+        return True
 
     def Drag(self, Cursor):
         self.Location = np.array(Cursor)
         self.UpdateLocation()
 
+    def Contains(self, Location):
+        P1 = self.Location + RotateOffset(self.LocToSWOffset, self.Rotation)
+        P2 = self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height]), self.Rotation)
+        return (Location >= np.minimum(P1, P2)).all() and (Location <= np.maximum(P1, P2)).all()
+
     def UpdateLocation(self):
         for Plot, (Xs, Ys) in zip(self.Plots[:4], self.CasingSides):
             Plot.set_data(Xs, Ys)
-        self.Plots[4].set_x(self.Location[0])
-        self.Plots[4].set_y(self.Location[1])
+        TLoc = self.TextLocation
+        self.Plots[4].set_x(TLoc[0])
+        self.Plots[4].set_y(TLoc[1])
+        self.Plots[4].set_rotation(self.TextRotation)
 
         for Pin in self.Pins.values():
             Pin.UpdateLocation()
+
+    @property
+    def TextLocation(self):
+        return self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height])/2, self.Rotation)
+    @property
+    def TextRotation(self):
+        if self.Symbol:
+            return 0 # If it is a symbol, must be plotted correctly at all times
+        return ((self.Rotation + (self.Width <= 10))%4)*90
+
 
     @property
     def CasingSides(self):
@@ -164,12 +210,30 @@ class Component(ComponentBase): # Template to create any type of component
                 ((X,X), (Y,y)), # East
                 ((X,x), (y,y))) # South
 
+    def destroy(self):
+        ComponentBase.destroy(self)
+        for Pin in self.Pins.values():
+            Pin.destroy()
+
+    def Highlight(self, var):
+        ComponentBase.Highlight(self, var)
+        for Pin in self.Pins.values():
+            Pin.Highlight(var)
+
+    @property
+    def AdvertisedLocations(self):
+        Locations = np.zeros((9*len(self.Pins),3), dtype = int)
+        for nPin, Pin in enumerate(self.Pins.values()):
+            Locations[9*nPin:9*(nPin+1),:2] = Pin.PinBaseLocation
+            Locations[9*nPin:9*(nPin+1),-1] = np.arange(9)
+        return Locations
+
 class ComponentPin(ComponentBase):
     DefaultLinewidth = Params.GUI.PlotsWidths.Wire
     DefaultMarkersize = 0
     CName = "Pin"
     def __init__(self, Parent, PinBaseOffset, Side, Name = ''):
-        ComponentBase.__init__(self, None)
+        ComponentBase.__init__(self)
         self.Parent = Parent
         self.Name = Name
         self.BaseRotation = {'E':0,
@@ -177,7 +241,7 @@ class ComponentPin(ComponentBase):
                              'W':2,
                              'S':3}[Side]
         self.PinBaseOffset = np.array(PinBaseOffset)
-        self.Vector = Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation + 2)
+        self.Vector = Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation)
         self.Offset = self.PinBaseOffset + self.Vector
 
         Loc = self.Location
@@ -185,7 +249,7 @@ class ComponentPin(ComponentBase):
 
         self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
         if self.Name:
-            self.text(*self.TextLocation, s=self.Name, color = Colors.Components.build, **self.NameTextDict(self.Rotation))
+            self.text(*self.TextLocation, s=self.Name, color = Colors.Components.build, **PinNameDict(self.Rotation + self.BaseRotation))
 
     def UpdateLocation(self):
         Loc = self.Location
@@ -195,7 +259,7 @@ class ComponentPin(ComponentBase):
             TLoc = self.TextLocation
             self.Plots[1].set_x(TLoc[0])
             self.Plots[1].set_y(TLoc[1])
-            self.Plots[1].set(**self.NameTextDict(self.Rotation))
+            self.Plots[1].set(**PinNameDict(self.Rotation + self.BaseRotation))
 
     @property
     def Location(self):
@@ -209,25 +273,23 @@ class ComponentPin(ComponentBase):
 
     @property
     def Rotation(self):
-        return self.Parent.Rotation + self.BaseRotation # Entries are on the left side, so entry wire goes towawrd the right, thus same orientation as its parent
-    @property
-    def ID(self):
-        return Parent.ID
+        return self.Parent.Rotation
     @property
     def AdvertisedLocations(self):
-        Locations = np.zeros((9,3), dtype = int)
-        Locations[0,:2] = self.Location
-        Locations[0,-1] = (self.Rotation%4)*2
-        Locations[1:,:2] = self.PinBaseLocation
-        Locations[1:,:] = np.arange(8)
+        return np.array([[self.Location[0], self.Location[1], ((self.Rotation+self.BaseRotation)%4)*2]])
         return Locations
+    @property
+    def AdvertisedConnexions(self):
+        return self.Location.reshape((1,2))
 
-    @staticmethod
-    def NameTextDict(Rotation):
-        SideIndex = Rotation & 0b11
-        return {'rotation':('horizontal', 'vertical', 'horizontal', 'vertical')[SideIndex],
-                'va':('center', 'top', 'center', 'bottom')[SideIndex],
-                'ha':('right', 'center', 'left', 'center')[SideIndex]}
+    def __repr__(self):
+        return f"{self.CName} {self.Name}"
+
+def PinNameDict(Rotation):
+    SideIndex = Rotation & 0b11
+    return {'rotation':('horizontal', 'vertical', 'horizontal', 'vertical')[SideIndex],
+            'va':('center', 'bottom', 'center', 'top')[SideIndex],
+            'ha':('left', 'center', 'right', 'center')[SideIndex]}
 
 def RotateOffset(Offset, Rotation): # Use LRU ?
     RotValue = (Rotation & 0b11)
@@ -241,49 +303,43 @@ def RotateOffset(Offset, Rotation): # Use LRU ?
         return np.array([Offset[1], -Offset[0]])
 
 class Wire(ComponentBase):
-    BuildMode = Params.GUI.Behaviour.DefaultBuildMode
+    BuildMode = None
     DefaultLinewidth = Params.GUI.PlotsWidths.Wire
     DefaultMarkersize = 0
     CName = "Wire"
-    def __init__(self, StartLocation, EndLocation = None):
-        ComponentBase.__init__(self, StartLocation)
+    def __init__(self, Location, Rotation):
+        ComponentBase.__init__(self, Location, Rotation)
 
         self.Points = np.zeros((3,2), dtype = int)
         self.plot(self.Points[:2,0], self.Points[:2,1], color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
         self.plot(self.Points[1:,0], self.Points[1:,1], color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
-        self.Points[0,:] = StartLocation
-        if EndLocation is None:
-            self.Points[2,:] = StartLocation
-        else:
-            self.Points[2,:] = EndLocation
+        self.Points[(0,2),:] = Location
         self.UpdateLocation()
 
         self.Value = None
         self.Connects = set()
 
-    def Fix(self, var):
-        if var:
-            RequestedLocations = []
-            P1, P2, P3 = self.Points
-            (A1, A2), (D1, D2) = self.Angles
-            if (P2 != P1).any():
-                RequestedLocations.append((P1[0], P1[1], A1+D1))
-                for x, y in np.linspace(P1, P2, abs(P2-P1).max()+1, dtype = int)[1:-1]:
-                    RequestedLocations.append((x,y,A1))
-                    RequestedLocations.append((x,y,A1+4))
-                RequestedLocations.append((P2[0], P2[1], (A1+D1+4)%8))
-            if (P3 != P2).any():
-                RequestedLocations.append((P2[0], P2[1], A2+D2))
-                for x, y in np.linspace(P2, P3, abs(P3-P2).max()+1, dtype = int)[1:-1]:
-                    RequestedLocations.append((x,y,A2))
-                    RequestedLocations.append((x,y,A2+4))
-                RequestedLocations.append((P3[0], P3[1], (A2+D2+4)%8))
-
-            if self.Handler.Register(np.array(RequestedLocations), self, (self.Points[0,:2], self.Points[2,:2])):
-                ComponentBase.Fix(self, True)
-                return True
-            else:
-                return False
+    @property
+    def AdvertisedLocations(self):
+        AdvertisedLocations = []
+        P1, P2, P3 = self.Points
+        (A1, A2), (D1, D2) = self.Angles
+        if (P2 != P1).any():
+            AdvertisedLocations.append((P1[0], P1[1], A1+D1))
+            for x, y in np.linspace(P1, P2, abs(P2-P1).max()+1, dtype = int)[1:-1]:
+                AdvertisedLocations.append((x,y,A1))
+                AdvertisedLocations.append((x,y,A1+4))
+            AdvertisedLocations.append((P2[0], P2[1], (A1+D1+4)%8))
+        if (P3 != P2).any():
+            AdvertisedLocations.append((P2[0], P2[1], A2+D2))
+            for x, y in np.linspace(P2, P3, abs(P3-P2).max()+1, dtype = int)[1:-1]:
+                AdvertisedLocations.append((x,y,A2))
+                AdvertisedLocations.append((x,y,A2+4))
+            AdvertisedLocations.append((P3[0], P3[1], (A2+D2+4)%8))
+        return np.array(AdvertisedLocations)
+    @property
+    def AdvertisedConnexions(self):
+        return self.Points[(0,2),:2]
 
     def UpdateLocation(self):
         if self.BuildMode == 0: # Straight wires
@@ -330,6 +386,9 @@ class Wire(ComponentBase):
         self.Points[2,:] = Cursor
         self.UpdateLocation()
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}"
+
 class Connexion(ComponentBase):
     CName = "Connexion"
     DefaultLinewidth = 0
@@ -358,3 +417,7 @@ class Connexion(ComponentBase):
     @property
     def Displayed(self):
         return self.NWires >= 3
+
+    @property
+    def AdvertisedLocations(self):
+        return np.array([[self.Location[0], self.Location[1], -1]])
