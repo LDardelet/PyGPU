@@ -7,6 +7,7 @@ class C:
     white = 'white'
     green = 'green'
     red = 'red'
+    orange = 'orange'
 
 class Colors:
     class GUI:
@@ -15,16 +16,20 @@ class Colors:
             default = C.lgrey
             pressed = C.grey
         Modes = {
-            0:C.white,
-            1:C.white,
-            2:C.yellow,
+            0:C.white,  # Default
+            1:C.white,  # Console
+            2:C.yellow, # Building
         }
     class Component:
-        build = C.yellow
-        fixed = C.white
-        on = C.green
-        off = C.red
-
+        Modes = {
+            0: C.yellow,    # Building
+            1: C.white,     # Fixed, undefined
+            2: C.red,       # Being removed
+        }
+        Values = {
+            0: C.orange,
+            1: C.green,
+        }
 
 class Params:
     class Board:
@@ -74,8 +79,8 @@ class Params:
             Components = {'and': 'a',
                           'or' : 'o',
                           'not': 'n',
-                          'true': 'p',
-                          'false': 'm',
+                          'true': 'h',
+                          'false': 'g',
                           'wire':'w',
             }
             Close = 'f4'
@@ -92,4 +97,14 @@ class Params:
             StopWireOnJoin = True
             DefaultWireBuildMode = 1
 
+class PinDict:
+    W,E,N,S = 'WENS'
+    Input = 0
+    Output = 1
+    PinTypeNames = {0:'Input',
+                    1:'Output'}
+LevelsNames = {
+    None:'Undef',
+    0:'LOW',
+    1:'HIGH'}
 Params.Board.Max = Params.Board.Size // 2

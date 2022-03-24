@@ -1,10 +1,56 @@
-import Components
+from Components import Wire, PinDict
+
+def W(Index, Name = ''):
+    return ((PinDict.W, Index), Name)
+def E(Index, Name = ''):
+    return ((PinDict.E, Index), Name)
+def N(Index, Name = ''):
+    return ((PinDict.N, Index), Name)
+def S(Index, Name = ''):
+    return ((PinDict.S, Index), Name)
 
 Definitions = {
-    'Wire' :Components.Wire,
-    'And': ('xy', 'z', '', '',lambda a, b: a and b, None, None, None, '&'),
-    'Or' : ('xy', 'z', '', '',lambda a, b: a or b , None, None, None, '|'),
-    'Not': ('x' , 'z', '', '',lambda a   : not a  , None, None, None, '~'),
-    'True' :(''  , ' ', '', '',lambda     : True   , None, 2   , 2   , '1'),
-    'False':(''  , ' ', '', '',lambda     : False  , None, 2   , 2   , '0'),
+    'Wire' :Wire,
+    'And': ([W(0),
+             W(1)],
+            [E(0)],
+        lambda a, b: a and b, 
+        None, 
+        None, 
+        None, 
+        True,
+        '&'),
+    'Or' : ([W(0),
+             W(1)],
+            [E(0)],
+        lambda a, b: a or b , 
+        None, 
+        None, 
+        None, 
+        True,
+        '|'),
+    'Not': ([W(0, 'in')],
+            [E(0, 'out')],
+        lambda a   : not a  , 
+        None, 
+        None, 
+        None, 
+        True,
+        '~'),
+    'True' :([],
+        [E(0)],
+        lambda     : True   , 
+        None, 
+        2   , 
+        2   ,
+        False,
+        '1'),
+    'False':([],
+        [E(0)],
+        lambda     : False  , 
+        None, 
+        2   , 
+        2   ,
+        False,
+        '0'),
 }

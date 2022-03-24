@@ -177,7 +177,7 @@ class GUI:
         Joins = self.CH.HasItem(self.Cursor)
         if self.Modes.Build:
             if self.TmpComponents:
-                if self.TmpComponents[0].Fix(True):
+                if self.TmpComponents[0].Fix():
                     self.CH.MoveHighlight(self.Cursor)
                     PreviousCComp = self.TmpComponents.pop(0).__class__
                     if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(PreviousCComp) or not Params.GUI.Behaviour.StopWireOnJoin or not Joins):

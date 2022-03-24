@@ -1,9 +1,35 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+import types
 from importlib import reload
-from Values import Colors, Params
+from Values import Colors, Params, PinDict
 from Console import Log, LogSuccess, LogWarning, LogError
+
+class States:
+    Building = 0
+    Fixed = 1
+    Removing = 2
+class StateHandler:
+    def __init__(self, Comp, StartValue = States.Building): # Starts building by default
+        self.Comp = Comp
+        self.Value = StartValue
+    @property
+    def Fixed(self):
+        return self.Value == States.Fixed
+    def Fix(self):
+        self.Value = States.Fixed
+        self.UpdateColor()
+    def UpdateColor(self):
+        Color = self.Color
+        for Plot in self.Comp.Plots:
+            Plot.set_color(Color)
+    @property
+    def Color(self):
+        if not self.Fixed or self.Comp.Group is None or self.Comp.Group.Value is None:
+            return Colors.Component.Modes[self.Value]
+        else:
+            return Colors.Component.Values[self.Comp.Group.Value]
 
 class ComponentBase:
     Board = None
@@ -17,7 +43,7 @@ class ComponentBase:
             self.Location = np.array(Location)
             self.Rotation = Rotation
 
-        self.Fixed = False
+        self.State = StateHandler(self)
         self.ID = None
         self.Highlighted = False
         self.Plots = []
@@ -46,29 +72,16 @@ class ComponentBase:
             Plot.set_linewidth(self.DefaultLinewidth*Factor)
             Plot.set_markersize(self.DefaultMarkersize*Factor)
 
-    def Fix(self, var, MustCheck = True):
-        if var == self.Fixed:
-            if self.Fixed:
-                raise ValueError("Component already fixed")
-            else:
-                raise ValueError("Component already unfixed")
-        if var:
-            if self.Handler.Register(self, MustCheck):
-                self.Fixed = True
-                self.SetColor()
-                return True
-            else:
-                return False
+    def Fix(self, MustCheck = True):
+        if self.State.Fixed:
+            raise ValueError("Component already fixed")
+        if self.Handler.Register(self, MustCheck):
+            if self.Handler.LiveUpdate and self.InputReady:
+                self()
+            self.State.Fix()
+            return True
         else:
-            raise NotImplementedError
-
-    def SetColor(self):
-        if self.Fixed:
-            for Plot in self.Plots:
-                Plot.set_color(Colors.Component.fixed)
-        else:
-            for Plot in self.Plots:
-                Plot.set_color(Colors.Component.build)
+            return False
 
     def LinkedTo(self, ID):
         return ID in self.Links
@@ -82,7 +95,14 @@ class ComponentBase:
         self.Rotation += 1
         self.UpdateLocation()
 
-    def Run(self):
+    @property
+    def InputReady(self): # Base components are not ready as they should not be updated (wires, connexions, ...)
+        return False
+    def Update(self):
+        self.State.UpdateColor()
+        if self.InputReady:
+            self()
+    def __call__(self):
         pass
 
     @property
@@ -107,26 +127,25 @@ class ComponentBase:
 
 class CasedComponent(ComponentBase): # Template to create any type of component
     DefaultLinewidth = Params.GUI.PlotsWidths.Casing
-    West = ''
-    East = ''
-    North= ''
-    South= ''
+    InputPinsDef = None
+    OutputPinsDef = None
     Callback = None
     Schematics = None
     ForceWidth = None
     ForceHeight = None
+    DisplayPinNumbering = None
     Symbol = ''
     def __init__(self, Location, Rotation):
         ComponentBase.__init__(self, Location, Rotation)
-        if self.Callback is None:
-            if self.Schematics is None:
-                raise ValueError("Component must have either a callback or an inner schematics to run")
-            self.Run = self.Schematics.Run
-        else:
-            self.Run = self.Callback
 
-        self.Width = 1+max(len(self.North), len(self.South))
-        self.Height = 1+max(len(self.West), len(self.East))
+        self.Width = 1
+        self.Height = 1
+        for (Side, Index), Name in self.InputPinsDef+self.OutputPinsDef:
+            if Side == PinDict.W or Side == PinDict.E:
+                self.Width = max(self.Width, Index+1)
+            else:
+                self.Height= max(self.Height,Index+1)
+
         if self.ForceWidth:
             if self.Width > self.ForceWidth:
                 raise ValueError(f"Unable to place all pins on component {self.CName} with constrained width {self.ForceWidth}")
@@ -143,25 +162,70 @@ class CasedComponent(ComponentBase): # Template to create any type of component
         self.LocToSWOffset = -np.array([self.Width//2, self.Height//2])
 
         for Xs, Ys in self.CasingSides:
-            self.plot(Xs, Ys, color = Colors.Component.build, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = self.DefaultLinewidth)
+            self.plot(Xs, Ys, color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = self.DefaultLinewidth)
 
-        self.text(*self.TextLocation, s = (self.CName, self.Symbol)[bool(self.Symbol)], color = Colors.Component.build, va = 'center', ha = 'center', rotation = self.TextRotation)
+        self.text(*self.TextLocation, s = (self.CName, self.Symbol)[bool(self.Symbol)], color = self.State.Color, va = 'center', ha = 'center', rotation = self.TextRotation)
 
         self.Pins = {}
-        for nPin, PinName in enumerate(self.West):
-            Offset = self.LocToSWOffset + np.array([0, self.Height-nPin-1])
-            self.Pins[f"W.{nPin}"] = ComponentPin(self, Offset, 'W', PinName)
-        for nPin, PinName in enumerate(self.East):
-            Offset = self.LocToSWOffset + np.array([self.Width, self.Height-nPin-1])
-            self.Pins[f"E.{nPin}"] = ComponentPin(self, Offset, 'E', PinName)
-        for nPin, PinName in enumerate(self.North):
-            Offset = self.LocToSWOffset + np.array([1+nPin, self.Height])
-            self.Pins[f"N.{nPin}"] = ComponentPin(self, Offset, 'N', PinName)
-        for nPin, PinName in enumerate(self.South):
-            Offset = self.LocToSWOffset + np.array([1+nPin, 0])
-            self.Pins[f"S.{nPin}"] = ComponentPin(self, Offset, 'S', PinName)
+        self.InputPins = []
+        self.OutputPins = []
+        def PinKey(Side, Index):
+            return f"{Side}.{Offset}"
+        for nPin, ((Side, Index), Name) in enumerate(self.InputPinsDef + self.OutputPinsDef):
+            if nPin < len(self.InputPinsDef):
+                PinsList = self.InputPins
+                Type = PinDict.Input
+            else:
+                PinsList = self.OutputPins
+                Type = PinDict.Output
+            if self.DisplayPinNumbering:
+                if not Name:
+                    Name = str(nPin)
+                else:
+                    Name = f"{nPin} ({Name})"
+            if Side == PinDict.W:
+                Offset = self.LocToSWOffset + np.array([0, self.Height-Index-1])
+            elif Side == PinDict.E:
+                Offset = self.LocToSWOffset + np.array([self.Width, self.Height-Index-1])
+            elif Side == PinDict.N:
+                Offset = self.LocToSWOffset + np.array([1+Index, self.Height])
+            elif Side == PinDict.S:
+                Offset = self.LocToSWOffset + np.array([1+nPin, 0])
+            else:
+                raise ValueError(f"Wrong component {self.__class__.__name__} definition")
+            self.Pins[PinKey(Side, Index)] = ComponentPin(self, Offset, Side, Type, Name)
+            PinsList.append(self.Pins[PinKey(Side, Index)])
 
-    def Fix(self, var, MustCheck = True): # Must override to take children into account. 
+        if len(self.OutputPins) == 1:
+            wrapper = lambda a:[a]
+        else:
+            wrapper = lambda a:a
+        if self.Callback is None:
+            if self.Schematics is None:
+                raise ValueError("Component must have either a callback or an inner schematics to run")
+            F = lambda self:wrapper(self.Schematics.Run(*self.Input))
+        else:
+            if len(self.InputPins) == 0:
+                F = lambda self:wrapper(self.__class__.Callback())
+            else:
+                F = lambda self:wrapper(self.__class__.Callback(*self.Input))
+        self.Run = types.MethodType(F, self)
+
+    def __call__(self):
+        for Pin, Value in zip(self.OutputPins, self.Run()):
+            Pin.Group.SetValue(Value, Pin)
+
+    @property
+    def Input(self):
+        return [Pin.Group.Value for Pin in self.InputPins]
+    @property
+    def Output(self):
+        return [Pin.Group.Value for Pin in self.OutputPins]
+    @property
+    def InputReady(self):
+        return (not None in self.Input)
+
+    def Fix(self, MustCheck = True): # Must override to take children into account. 
         if not self.Handler.CheckRoom(self):
             LogWarning(f"Unable to register the new component, due to casing location")
             return False
@@ -169,9 +233,9 @@ class CasedComponent(ComponentBase): # Template to create any type of component
             if not self.Handler.CheckRoom(Pin): # We check first all locations
                 LogWarning(f"Unable to register the new component, due to pin {PName} location")
                 return False
-        ComponentBase.Fix(self, var, MustCheck = False)
         for Pin in self.Pins.values():
-            Pin.Fix(var, MustCheck = False)
+            Pin.Fix(MustCheck = False)
+        ComponentBase.Fix(self, MustCheck = False) # Must set component last, as it matters if live update
         return True
 
     def Drag(self, Cursor):
@@ -236,14 +300,15 @@ class ComponentPin(ComponentBase):
     DefaultLinewidth = Params.GUI.PlotsWidths.Wire
     DefaultMarkersize = 0
     CName = "Pin"
-    def __init__(self, Parent, PinBaseOffset, Side, Name = ''):
+    def __init__(self, Parent, PinBaseOffset, Side, Type, Name = ''):
         ComponentBase.__init__(self)
         self.Parent = Parent
+        self.Type = Type
         self.Name = Name
-        self.BaseRotation = {'E':0,
-                             'N':1,
-                             'W':2,
-                             'S':3}[Side]
+        self.BaseRotation = {PinDict.E:0,
+                             PinDict.N:1,
+                             PinDict.W:2,
+                             PinDict.S:3}[Side]
         self.PinBaseOffset = np.array(PinBaseOffset)
         self.Vector = Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation)
         self.Offset = self.PinBaseOffset + self.Vector
@@ -251,9 +316,9 @@ class ComponentPin(ComponentBase):
         Loc = self.Location
         BLoc = self.PinBaseLocation
 
-        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Colors.Component.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
         if self.Name:
-            self.text(*self.TextLocation, s=self.Name, color = Colors.Component.build, **PinNameDict(self.Rotation + self.BaseRotation))
+            self.text(*self.TextLocation, s=self.Name, color = self.State.Color, **PinNameDict(self.Rotation + self.BaseRotation))
 
     def UpdateLocation(self):
         Loc = self.Location
@@ -286,7 +351,7 @@ class ComponentPin(ComponentBase):
         return self.Location.reshape((1,2))
 
     def __repr__(self):
-        return f"{self.CName} {self.Name}"
+        return f"{PinDict.PinTypeNames[self.Type]} {self.CName} {self.Name}"
 
 def PinNameDict(Rotation):
     SideIndex = Rotation & 0b11
@@ -314,12 +379,11 @@ class Wire(ComponentBase):
         ComponentBase.__init__(self, Location, Rotation)
 
         self.Points = np.zeros((3,2), dtype = int)
-        self.plot(self.Points[:2,0], self.Points[:2,1], color = Colors.Component.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
-        self.plot(self.Points[1:,0], self.Points[1:,1], color = Colors.Component.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        self.plot(self.Points[:2,0], self.Points[:2,1], color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        self.plot(self.Points[1:,0], self.Points[1:,1], color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
         self.Points[(0,2),:] = Location
         self.UpdateLocation()
 
-        self.Value = None
         self.Connects = set()
 
     @property
@@ -398,15 +462,15 @@ class Connexion(ComponentBase):
     DefaultMarkersize = Params.GUI.PlotsWidths.Connexion
     def __init__(self, Location, Column): # Warning : 0 is stored in sets, to avoid many checks.
         ComponentBase.__init__(self, Location)
-        self.Fixed = True
+        self.State.Fix()
 
         self.IDs = set(Column[:8]) # Set to avoid unnecessary storage
         self.NWires = (Column[:8] > 0).sum()
         
-        self.plot(self.Location[0], self.Location[1], Highlight = False, marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = Colors.Component.fixed)
+        self.plot(self.Location[0], self.Location[1], Highlight = False, marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = self.State.Color)
         self.CheckDisplay()
 
-    def Update(self, Column):
+    def UpdateConnexions(self, Column):
         self.IDs = set(Column[:8])
         self.NWires = (Column[:8] > 0).sum()
         self.CheckDisplay()

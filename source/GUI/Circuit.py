@@ -1,7 +1,7 @@
 import numpy as np
 
 import Components
-from Values import Colors, Params
+from Values import Colors, Params, LevelsNames
 from Console import Log, LogSuccess, LogWarning, LogError
 import DefaultLibrary
 
@@ -17,7 +17,9 @@ class ComponentsHandler:
         self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 9), dtype = int)
 
         self.Highlighed = None
-        self.Groups = {} # Groups shre wire transmissions
+        self.Groups = {} # Groups share wire transmissions
+
+        self.LiveUpdate = True
 
     def Register(self, NewComponent, MustCheck = True):
         if MustCheck and not self.CheckRoom(NewComponent):
@@ -30,7 +32,7 @@ class ComponentsHandler:
             if ConnID == NewComponent.ID: # Need to check for location forbidden connexions
                 continue
             if ConnID and self.Components[ConnID].Displayed: # Start by linking existing connexions on the advertized locations
-                self.Components[ConnID].Update(self.Map[x,y,:])
+                self.Components[ConnID].UpdateConnexions(self.Map[x,y,:])
                 self.AddLink(NewComponent.ID, ConnID)
 
         for x,y in NewComponent.AdvertisedConnexions: # Add automatically created connexions, in particular to existing hidden connexions
@@ -39,7 +41,7 @@ class ComponentsHandler:
                 continue
             if ConnID:
                 if not self.Components[ConnID].LinkedTo(NewComponent.ID):# If NewConnexion should already be within NewLocations, hidden connexions would have been avoided due to previous method
-                    self.Components[ConnID].Update(self.Map[x,y,:])
+                    self.Components[ConnID].UpdateConnexions(self.Map[x,y,:])
                     self.AddLink(NewComponent.ID, ConnID)
             else:
                 self.AddConnexion((x,y)) # If not, we create it
@@ -47,7 +49,6 @@ class ComponentsHandler:
 
     def CheckRoom(self, NewComponent):
         NewLocations = NewComponent.AdvertisedLocations
-        print(NewLocations)
         Values = self.Map[NewLocations[:,0], NewLocations[:,1], NewLocations[:,2]]
         return (Values == 0).all() # TODO : Ask for wire bridges
             #LogWarning(f"Unable to register the new component, due to positions {NewLocations[np.where(Values != 0), :].tolist()}")
@@ -154,7 +155,7 @@ class ComponentsHandler:
         if not Groups:
             return ""
 
-        return ', '.join([f'Group {Group.ID} : '+ ', '.join([str(Component) for Component in Components]) for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
+        return ', '.join([f'Group {Group.ID} : '+ ', '.join([str(Component) for Component in Components])+f' ({LevelsNames[Group.Value]})' for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
 
     def Wired(self, Location):
         for ID in self.Map[Location[0], Location[1], :8]:
@@ -196,6 +197,11 @@ class GroupClass:
             LogWarning(f"Group {self.ID} set by {Component} and {self.SetBy}")
         self.SetBy = Component
         self.Value = Value
+        self.UpdateGroupColor()
+
+    def UpdateGroupColor(self): # May be more efficient to update plots directly. However, it forbids hot board modifications
+        for Component in self.Components:
+            Component.Update()
 
     def Highlight(self, var):
         for Component in self.Components:
@@ -223,7 +229,11 @@ class CGroup:
 
     def AddComponentClass(self, Name, Values):
         try:
-            West, East, North, South, Callback, Schematics, ForceWidth, ForceHeight, Symbol = Values
+            InputPinsDef, OutputPinsDef, Callback, Schematics, ForceWidth, ForceHeight, DisplayPinNumbering, Symbol = Values
+            PinIDs = set()
+            for PinLocation, PinName in InputPinsDef + OutputPinsDef:
+                if PinLocation in PinIDs:
+                    raise ValueError
         except ValueError:
             LogWarning(f"Unable to load component {Name} from its definition")
             return
@@ -232,14 +242,13 @@ class CGroup:
                                    {
                                        '__init__': Components.CasedComponent.__init__,
                                        'CName': Name,
-                                       'West' : West,
-                                       'East' : East,
-                                       'North': North,
-                                       'South': South,
+                                       'InputPinsDef'    : InputPinsDef,
+                                       'OutputPinsDef'    : OutputPinsDef,
                                        'Callback'   : Callback,
                                        'Schematics' : Schematics,
-                                       'ForceWidth' :ForceWidth,
-                                       'ForceHeight':ForceHeight,
+                                       'ForceWidth' : ForceWidth,
+                                       'ForceHeight': ForceHeight,
+                                       'DisplayPinNumbering':DisplayPinNumbering,
                                        'Symbol':Symbol,
                                    })
 class CLibrary:
