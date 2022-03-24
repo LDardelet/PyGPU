@@ -20,6 +20,7 @@ class GUI:
         self.MainWindow = Tk.Tk()
         self.MainWindow.title('Logic Gates Simulator')
 
+        self.LoadGUIModes()
         self.LoadBoardData()
 
         self.LoadGUI()
@@ -28,8 +29,43 @@ class GUI:
 
         self.MainWindow.mainloop()
 
+    def LoadGUIModes(self):
+        class DefaultModeC(ModeC):
+            ID = 0
+            def SetProps(self):
+                self.CheckConnexionAvailable()
+            def LeaveProps(self):
+                self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.DISABLED)
+        class ConsoleModeC(ModeC):
+            ID = 1
+            def SetProps(self):
+                self.MainFrame.Console.ConsoleInstance.text.see(Tk.END)
+                self.MainFrame.Console.ConsoleInstance.text.focus_set()
+            def LeaveProps(self):
+                self.MainWindow.focus_set()
+        class BuildModeC(ModeC):
+            ID = 2
+            def SetProps(self):
+                self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.HiddenAlpha)
+            def LeaveProps(self):
+                self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.DefaultAlpha)
+                self.SelectLibComponent(None)
+            def ReloadProps(self):
+                self.ClearTmpComponent()
+        class ModesDict:
+            Default = DefaultModeC()
+            Console = ConsoleModeC()
+            Build =   BuildModeC()
+            def __init__(self):
+                self.List = (self.Default, self.Console, self.Build)
+            @property
+            def Current(self):
+                return ModeC.Current
+
+        ModeC.GUI = self
+        self.Modes = ModesDict()
+
     def LoadBoardData(self):
-        self.Mode = Params.GUI.Modes.Default
         self.Rotation = 0
 
         self.CH = Circuit.ComponentsHandler()
@@ -37,37 +73,9 @@ class GUI:
         
         self.TmpComponents = []
 
-    def SetMode(self, Mode, Advertise = False):
-        self.Mode, Change = Mode, (self.Mode != Mode)
-        if Advertise and Change:
-            Log(f"Mode {Params.GUI.ModesNames[self.Mode]}")
-        self.ClearTmpComponent()
-        if self.Mode == Params.GUI.Modes.Wire:
-            if Params.GUI.Behaviour.AutoStartWire:
-                self.StartWire()
-            if not Change:
-                self.Draw()
-                return
-        if self.Mode == Params.GUI.Modes.Console:
-            self.MainFrame.Console.ConsoleInstance.text.see(Tk.END)
-            if Change:
-                self.MainFrame.Console.ConsoleInstance.text.focus_set()
-        else:
-            self.MainWindow.focus_set()
-        if self.Mode == Params.GUI.Modes.Default:
-            self.CheckConnexionAvailable()
-        else:
-            self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.DISABLED)
-        self.UpdateModePlot()
-
-    def StartWire(self):
-        LogWarning("Deprecated")
-        self.ClearTmpComponent()
-        self.TmpComponents.append(self.Library.IO.Wire(self.Cursor, self.Rotation))
-        self.Draw()
-
     def StartComponent(self, CClass):
-        self.SetMode(Params.GUI.Modes.Build)
+        self.SelectLibComponent(self.CompToButtonMap[CClass])
+        self.Modes.Build()
         self.TmpComponents.append(CClass(self.Cursor, self.Rotation))
         self.Draw()
 
@@ -75,27 +83,16 @@ class GUI:
         while self.TmpComponents:
             self.TmpComponents.pop(0).destroy()
 
-    def UpdateModePlot(self):
-        if self.Mode == Params.GUI.Modes.Default or self.Mode == Params.GUI.Modes.Console:
-            Color = Colors.Components.default
-        elif self.Mode == Params.GUI.Modes.Wire or self.Mode == Params.GUI.Modes.Build:
-            Color = Colors.Components.build
-        self.Plots['Cursor'].set_color(Color)
-        if Params.GUI.View.CursorLinesWidth:
-            self.Plots['HCursor'].set_color(Color)
-            self.Plots['VCursor'].set_color(Color)
-        self.DisplayFigure.canvas.draw()
-
     def OnKeyMove(self, Motion, Mod):
-        if self.Mode == Params.GUI.Modes.Console:
+        if self.Modes.Console:
             return
         Move = Motion*10**(int(Mod == 1))
         self.Cursor += Move
         self.OnMove()
 
     def OnClickMove(self, Click):
-        if self.Mode == Params.GUI.Modes.Console:
-            self.SetMode(Params.GUI.Modes.Default, Advertise = False)
+        if self.Modes.Console:
+            self.Modes.Default()
         self.Cursor = np.rint(Click).astype(int)
         self.OnMove()
 
@@ -105,7 +102,7 @@ class GUI:
         self.CH.MoveHighlight(self.Cursor)
         for Component in self.TmpComponents:
             Component.Drag(self.Cursor)
-        if self.Mode == Params.GUI.Modes.Default:
+        if self.Modes.Default:
             self.CheckConnexionAvailable()
         self.Draw()
 
@@ -168,41 +165,32 @@ class GUI:
 
     def SetWireBuildMode(self, mode=None):
         if mode is None:
-            mode = 1-self.Library.IO.Wire.BuildMode
-        self.WireButtons[mode].configure(background = Colors.GUI.pressed)
-        self.WireButtons[1-mode].configure(background = Colors.GUI.bg)
-        self.Library.IO.Wire.BuildMode = mode
-        if self.Mode == Params.GUI.Modes.Build and self.Library.IsWire(self.TmpComponents[0]):
+            mode = 1-self.Library.Wire.BuildMode
+        self.WireButtons[mode].configure(background = Colors.GUI.Widget.pressed)
+        self.WireButtons[1-mode].configure(background = Colors.GUI.Widget.default)
+        self.Library.Wire.BuildMode = mode
+        if self.Modes.Build and self.Library.IsWire(self.TmpComponents[0]):
             self.TmpComponents[0].UpdateLocation()
             self.Draw()
 
     def Set(self):
-        if self.Mode == Params.GUI.Modes.Wire:
-            if self.TmpComponents:
-                ClosesCircuit = self.CH.HasItem(self.Cursor)
-                if self.TmpComponents[0].Fix(True):
-                    self.CH.MoveHighlight(self.Cursor)
-                    self.TmpComponents.pop(0)
-                    if Params.GUI.Behaviour.AutoContinueWire and not (ClosesCircuit and Params.GUI.Behaviour.StopWireOnJoin):
-                        self.StartWire()
-                    else:
-                        self.Draw()
-            else:
-                self.StartWire()
-        elif self.Mode == Params.GUI.Modes.Build:
+        Joins = self.CH.HasItem(self.Cursor)
+        if self.Modes.Build:
             if self.TmpComponents:
                 if self.TmpComponents[0].Fix(True):
                     self.CH.MoveHighlight(self.Cursor)
                     PreviousCComp = self.TmpComponents.pop(0).__class__
-                    if Params.GUI.Behaviour.AutoContinueComponent:
+                    if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(PreviousCComp) or not Params.GUI.Behaviour.StopWireOnJoin or not Joins):
                         self.StartComponent(PreviousCComp)
-        elif self.Mode == Params.GUI.Modes.Default:
+                    else:
+                        self.Modes.Default()
+                        self.Draw()
+        elif self.Modes.Default:
             if self.CH.Wired(self.Cursor):
-                self.SetMode(Params.GUI.Modes.Wire)
-                self.StartWire()
+                self.StartComponent(self.Library.Wire)
 
     def Switch(self):
-        if self.Mode == Params.GUI.Modes.Build and self.Library.IsWire(self.TmpComponents[0]):
+        if self.Modes.Build and self.Library.IsWire(self.TmpComponents[0]):
             self.SetWireBuildMode()
 
     def Rotate(self, var):
@@ -251,8 +239,10 @@ class GUI:
         self.AddControlKey(Controls.Connect, lambda key, mod: self._ToggleConnexion())
         for Key in Controls.Moves:
             self.AddControlKey(Key, lambda key, mod: self.OnKeyMove(Params.GUI.Controls.Moves[key], mod))
-        for Key in Controls.Modes:
-            self.AddControlKey(Key, lambda key, mod: self.SetMode(Params.GUI.Controls.Modes[key]))
+        for Mode in self.Modes.List:
+            if Mode.Key is None:
+                continue
+            self.AddControlKey(Mode.Key, lambda key, mod, Mode = Mode: Mode())
 
         #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__)) # Override to check key value
 
@@ -267,7 +257,7 @@ class GUI:
         ConsoleInstance.pack(fill=Tk.BOTH, expand=True)
         self.MainFrame.Console.RemoveDefaultName()
         self.MainFrame.Console.AdvertiseChild(ConsoleInstance, "ConsoleInstance")
-        ConsoleInstance.text.bind('<Button-1>', lambda e:self.SetMode(Params.GUI.Modes.Console, Advertise = False))
+        ConsoleInstance.text.bind('<Button-1>', lambda e:self.Modes.Console())
 
     def LoadBoard(self):
         self.MainFrame.Board.AddFrame("Controls", Side = Tk.LEFT)
@@ -304,17 +294,17 @@ class GUI:
 
         self.Plots = {}
 
-        self.Plots['Cursor'] = self.DisplayAx.plot(0,0, marker = 'o', color = Colors.Components.default)[0]
+        self.Plots['Cursor'] = self.DisplayAx.plot(0,0, marker = 'o', color = self.Modes.Current.Color)[0]
         if Params.GUI.View.CursorLinesWidth:
-            self.Plots['HCursor'] = self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max], [0,0], linewidth = Params.GUI.View.CursorLinesWidth, color = Colors.Components.default, alpha = 0.3)[0]
-            self.Plots['VCursor'] = self.DisplayAx.plot([0,0], [-Params.Board.Max, Params.Board.Max], linewidth = Params.GUI.View.CursorLinesWidth, color = Colors.Components.default, alpha = 0.3)[0]
+            self.Plots['HCursor'] = self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max], [0,0], linewidth = Params.GUI.View.CursorLinesWidth, color = self.Modes.Current.Color, alpha = 0.3)[0]
+            self.Plots['VCursor'] = self.DisplayAx.plot([0,0], [-Params.Board.Max, Params.Board.Max], linewidth = Params.GUI.View.CursorLinesWidth, color = self.Modes.Current.Color, alpha = 0.3)[0]
         RLE = Params.GUI.View.RefLineEvery
         if RLE:
             NLines = Params.Board.Size // RLE
             self.Plots['HLines']=[self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max], 
-                                 [nLine*RLE, nLine*RLE], color = Colors.Components.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
+                                 [nLine*RLE, nLine*RLE], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
             self.Plots['VLines']=[self.DisplayAx.plot([nLine*RLE, nLine*RLE], 
-                                 [-Params.Board.Max, Params.Board.Max], color = Colors.Components.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
+                                 [-Params.Board.Max, Params.Board.Max], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
 
         self.DisplayCanvas = matplotlib.backends.backend_tkagg.FigureCanvasTkAgg(self.DisplayFigure, self.MainFrame.Board.View.frame)
         self.DisplayCanvas.draw()
@@ -351,16 +341,30 @@ class GUI:
         pass
 
     def LoadLibraryGUI(self):
+        self.CompToButtonMap = {}
+        self.CurrentCompButton = None
         for GName in self.Library.Groups:
             Group = self.Library.__dict__[GName]
             GroupFrame = self.MainFrame.Library.AddFrame(GName, Side = Tk.TOP, NameDisplayed = True)
-            for CName in Group.Components:
+            CompFrame = GroupFrame.AddFrame("CompFrame", NameDisplayed = False)
+            for nComp, CName in enumerate(Group.Components):
+                row = nComp // Params.GUI.Library.Columns
+                column = nComp % Params.GUI.Library.Columns
                 Component = Group.__dict__[CName]
                 Add = ''
-                if CName in Params.GUI.Controls.Components:
-                    Add = f' ({Params.GUI.Controls.Components[CName]})'
-                    self.AddControlKey(Params.GUI.Controls.Components[CName], lambda key, mod, CClass = Component: self.StartComponent(CClass))
-                GroupFrame.AddWidget(Tk.Button, f"{GName}.{CName}", text = CName+Add, height = Params.GUI.Library.ComponentHeight, command = lambda CClass = Component: self.StartComponent(CClass))
+                if CName.lower() in Params.GUI.Controls.Components:
+                    Add = f' ({Params.GUI.Controls.Components[CName.lower()]})'
+                    self.AddControlKey(Params.GUI.Controls.Components[CName.lower()], lambda key, mod, CClass = Component: self.StartComponent(CClass))
+                self.CompToButtonMap[Component] = CompFrame.AddWidget(Tk.Button, f"{GName}.{CName}", row = row, column = column, text = CName+Add, height = Params.GUI.Library.ComponentHeight, command = lambda CClass = Component: self.StartComponent(CClass))
+
+    def SelectLibComponent(self, Button):
+        if Button == self.CurrentCompButton:
+            return
+        if not self.CurrentCompButton is None:
+            self.CurrentCompButton.configure(background = Colors.GUI.Widget.default)
+        self.CurrentCompButton = Button
+        if not self.CurrentCompButton is None:
+            self.CurrentCompButton.configure(background = Colors.GUI.Widget.pressed)
 
     def Close(self, Restart = False):
         self.MainWindow.quit()
@@ -370,6 +374,46 @@ class GUI:
 def Void(*args, **kwargs):
     pass
     #print(args[0])
+
+class ModeC:
+    GUI = None
+    Current = None
+    ID = None
+    Name = None
+    Color = None
+    def __init__(self):
+        self.Key = Params.GUI.Controls.Modes.get(self.ID, None)
+        self.Name = Params.GUI.ModesNames[self.ID]
+        self.Color = Colors.GUI.Modes[self.ID]
+        if self.Current is None:
+            ModeC.Current = self
+    def __call__(self, Advertise = True):
+        if self.Current == self:
+            self.__class__.ReloadProps(self.GUI) # This writing allows to make XProps functions like GUI class methods
+            return
+        if Advertise:
+            Log(f"Mode {self.Name}")
+        self.GUI.ClearTmpComponent() # If mode changes, we assume that the current component MUST be cleared
+        self.Current.__class__.LeaveProps(self.GUI)
+        ModeC.Current = self
+        self.__class__.SetProps(self.GUI)
+        self.GUI.Plots['Cursor'].set_color(self.Color)
+        if Params.GUI.View.CursorLinesWidth:
+            self.GUI.Plots['HCursor'].set_color(self.Color)
+            self.GUI.Plots['VCursor'].set_color(self.Color)
+        self.GUI.DisplayFigure.canvas.draw()
+    def __bool__(self):
+        return self.Current == self
+
+    def SetProps(self):
+        pass
+    def LeaveProps(self):
+        pass
+    def ReloadProps(self):
+        pass
+    @property
+    def IsActive(self):
+        return self.Current == self
 
 class SFrame:
     def __init__(self, frame, Name="Main", Side = None, NameDisplayed = False):
@@ -420,6 +464,8 @@ class SFrame:
     def AddWidget(self, WidgetClass, Name = "", row=None, column=None, Sticky = True, **kwargs):
         self.RemoveDefaultName()
 
+        if WidgetClass == Tk.Button:
+            kwargs['background'] = Colors.GUI.Widget.default
         if Name != "" and Name in self.Children:
             raise Exception("Widget name already taken")
         NewWidget = WidgetClass(self.frame, **kwargs)
@@ -431,7 +477,7 @@ class SFrame:
                 kwargs["sticky"] = Tk.NSEW
             if row is None or column is None:
                 raise Exception(f"Frame {self.Name} must be packed to omit location when adding children")
-            NewWidget.grid(row = row, column = column)
+            NewWidget.grid(row = row, column = column, **kwargs)
         else:
             if Sticky:
                 kwargs["fill"] = Tk.BOTH

@@ -1,15 +1,30 @@
 import numpy as np
 
+class C:
+    grey = 'grey'
+    lgrey = 'light grey'
+    yellow = 'yellow'
+    white = 'white'
+    green = 'green'
+    red = 'red'
+
 class Colors:
-    class Components:
-        default = 'grey'
-        build = 'yellow'
-        fixed = 'white'
-        on = 'green'
-        off = 'red'
     class GUI:
-        bg = 'light grey'
-        pressed = 'grey'
+        default = C.grey
+        class Widget:
+            default = C.lgrey
+            pressed = C.grey
+        Modes = {
+            0:C.white,
+            1:C.white,
+            2:C.yellow,
+        }
+    class Component:
+        build = C.yellow
+        fixed = C.white
+        on = C.green
+        off = C.red
+
 
 class Params:
     class Board:
@@ -18,17 +33,12 @@ class Params:
         ComponentMinWidth = 3
         ComponentMinHeight = 3
     class GUI:
-        class Modes:
-            Default = 0
-            Wire = 1
-            Console = 2
-            Build = 3
         ModesNames = {0:"Default",
-                      1: "Wire",
-                      2: "Console",
-                      3: "Build",
+                      1: "Console",
+                      2: "Build",
         }
         class Library:
+            Columns = 2
             ComponentHeight = 2
         class View:
             FigSize = (7.,7.)
@@ -37,6 +47,10 @@ class Params:
 
             RefLineEvery = 20
             CursorLinesWidth = 1
+        class Cursor:
+            Marker = 'o'
+            DefaultAlpha = 1.
+            HiddenAlpha = 0.4
         class PlotsWidths:
             HighlightFactor = 1.7
             Wire = 1
@@ -54,14 +68,15 @@ class Params:
                 "up":np.array([0,1]),
                 "down":np.array([0,-1])
             }
-            Modes = {"escape":0,
-#                     'w':1, # Comment to disable wire mode 
-                     'twosuperior':2
+            Modes = {0:"escape",
+                    1:'twosuperior'
             }
-            Components = {'AND': 'a',
-                          'OR' : 'o',
-                          'NOT': 'n',
-                          'Wire':'w',
+            Components = {'and': 'a',
+                          'or' : 'o',
+                          'not': 'n',
+                          'true': 'p',
+                          'false': 'm',
+                          'wire':'w',
             }
             Close = 'f4'
             Restart = 'f5'
@@ -73,8 +88,6 @@ class Params:
             Height = 9
             Width = 120
         class Behaviour:
-            AutoStartWire = False
-            AutoContinueWire = True
             AutoContinueComponent = True
             StopWireOnJoin = True
             DefaultWireBuildMode = 1

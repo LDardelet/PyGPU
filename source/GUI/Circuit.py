@@ -47,6 +47,7 @@ class ComponentsHandler:
 
     def CheckRoom(self, NewComponent):
         NewLocations = NewComponent.AdvertisedLocations
+        print(NewLocations)
         Values = self.Map[NewLocations[:,0], NewLocations[:,1], NewLocations[:,2]]
         return (Values == 0).all() # TODO : Ask for wire bridges
             #LogWarning(f"Unable to register the new component, due to positions {NewLocations[np.where(Values != 0), :].tolist()}")
@@ -157,7 +158,7 @@ class ComponentsHandler:
 
     def Wired(self, Location):
         for ID in self.Map[Location[0], Location[1], :8]:
-            if ID and isinstance(self.Components[ID], Components.Wire):
+            if ID and (isinstance(self.Components[ID], Components.Wire) or isinstance(self.Components[ID], Components.ComponentPin)):
                 return True
         return False
     def HasItem(self, Location):
@@ -245,14 +246,12 @@ class CLibrary:
     ComponentBase = Components.ComponentBase
     def __init__(self):
         self.Groups = []
-        self.AddGroup(CGroup('Basic gates', DefaultLibrary.BasicGates.Definitions))
-        self.AddGroup(CGroup('IO', {
-            'Wire': Components.Wire,
-        }))
+        self.AddGroup(CGroup('Standard', DefaultLibrary.Definitions))
+        self.Wire = Components.Wire
 
     def AddGroup(self, Group):
         self.__dict__[Group.Name] = Group
         self.Groups.append(Group.Name)
 
-    def IsWire(self, C):
-        return isinstance(C, Components.Wire)
+    def IsWire(self, C): # Checks if class or class instance
+        return C == Components.Wire or isinstance(C, Components.Wire)

@@ -65,10 +65,10 @@ class ComponentBase:
     def SetColor(self):
         if self.Fixed:
             for Plot in self.Plots:
-                Plot.set_color(Colors.Components.fixed)
+                Plot.set_color(Colors.Component.fixed)
         else:
             for Plot in self.Plots:
-                Plot.set_color(Colors.Components.build)
+                Plot.set_color(Colors.Component.build)
 
     def LinkedTo(self, ID):
         return ID in self.Links
@@ -125,23 +125,27 @@ class CasedComponent(ComponentBase): # Template to create any type of component
         else:
             self.Run = self.Callback
 
-        self.Width = max(Params.Board.ComponentMinWidth, 1+max(len(self.North), len(self.South)))
-        self.Height = max(Params.Board.ComponentMinHeight, 1+max(len(self.West), len(self.East)))
+        self.Width = 1+max(len(self.North), len(self.South))
+        self.Height = 1+max(len(self.West), len(self.East))
         if self.ForceWidth:
             if self.Width > self.ForceWidth:
                 raise ValueError(f"Unable to place all pins on component {self.CName} with constrained width {self.ForceWidth}")
             self.Width = self.ForceWidth
+        else:
+            self.Width = max(self.Width, Params.Board.ComponentMinWidth)
         if self.ForceHeight:
             if self.Height > self.ForceHeight:
                 raise ValueError(f"Unable to place all pins on component {self.CName} with constrained height {self.ForceHeight}")
             self.Height = self.ForceHeight
+        else:
+            self.Height = max(self.Height, Params.Board.ComponentMinHeight)
 
         self.LocToSWOffset = -np.array([self.Width//2, self.Height//2])
 
         for Xs, Ys in self.CasingSides:
-            self.plot(Xs, Ys, color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = self.DefaultLinewidth)
+            self.plot(Xs, Ys, color = Colors.Component.build, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = self.DefaultLinewidth)
 
-        self.text(*self.TextLocation, s = (self.CName, self.Symbol)[bool(self.Symbol)], color = Colors.Components.build, va = 'center', ha = 'center', rotation = self.TextRotation)
+        self.text(*self.TextLocation, s = (self.CName, self.Symbol)[bool(self.Symbol)], color = Colors.Component.build, va = 'center', ha = 'center', rotation = self.TextRotation)
 
         self.Pins = {}
         for nPin, PinName in enumerate(self.West):
@@ -247,9 +251,9 @@ class ComponentPin(ComponentBase):
         Loc = self.Location
         BLoc = self.PinBaseLocation
 
-        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Colors.Component.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
         if self.Name:
-            self.text(*self.TextLocation, s=self.Name, color = Colors.Components.build, **PinNameDict(self.Rotation + self.BaseRotation))
+            self.text(*self.TextLocation, s=self.Name, color = Colors.Component.build, **PinNameDict(self.Rotation + self.BaseRotation))
 
     def UpdateLocation(self):
         Loc = self.Location
@@ -276,8 +280,7 @@ class ComponentPin(ComponentBase):
         return self.Parent.Rotation
     @property
     def AdvertisedLocations(self):
-        return np.array([[self.Location[0], self.Location[1], ((self.Rotation+self.BaseRotation)%4)*2]])
-        return Locations
+        return np.array([[self.Location[0], self.Location[1], ((self.Rotation+self.BaseRotation+2)%4)*2]])
     @property
     def AdvertisedConnexions(self):
         return self.Location.reshape((1,2))
@@ -311,8 +314,8 @@ class Wire(ComponentBase):
         ComponentBase.__init__(self, Location, Rotation)
 
         self.Points = np.zeros((3,2), dtype = int)
-        self.plot(self.Points[:2,0], self.Points[:2,1], color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
-        self.plot(self.Points[1:,0], self.Points[1:,1], color = Colors.Components.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        self.plot(self.Points[:2,0], self.Points[:2,1], color = Colors.Component.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        self.plot(self.Points[1:,0], self.Points[1:,1], color = Colors.Component.build, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
         self.Points[(0,2),:] = Location
         self.UpdateLocation()
 
@@ -400,7 +403,7 @@ class Connexion(ComponentBase):
         self.IDs = set(Column[:8]) # Set to avoid unnecessary storage
         self.NWires = (Column[:8] > 0).sum()
         
-        self.plot(self.Location[0], self.Location[1], Highlight = False, marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = Colors.Components.fixed)
+        self.plot(self.Location[0], self.Location[1], Highlight = False, marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = Colors.Component.fixed)
         self.CheckDisplay()
 
     def Update(self, Column):

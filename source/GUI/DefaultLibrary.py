@@ -1,8 +1,10 @@
 import Components
 
-class BasicGates:
-    Definitions = {
-        'AND': ('xy', 'z', '', '',lambda a, b: a & b, None, None, None, '&'),
-        'OR':  ('xy', 'z', '', '',lambda a, b: a | b, None, None, None, '|'),
-        'NOT': ('x' , 'z', '', '',lambda a   : ~a   , None, None, None, '~'),
-    }
+Definitions = {
+    'Wire' :Components.Wire,
+    'And': ('xy', 'z', '', '',lambda a, b: a and b, None, None, None, '&'),
+    'Or' : ('xy', 'z', '', '',lambda a, b: a or b , None, None, None, '|'),
+    'Not': ('x' , 'z', '', '',lambda a   : not a  , None, None, None, '~'),
+    'True' :(''  , ' ', '', '',lambda     : True   , None, 2   , 2   , '1'),
+    'False':(''  , ' ', '', '',lambda     : False  , None, 2   , 2   , '0'),
+}
