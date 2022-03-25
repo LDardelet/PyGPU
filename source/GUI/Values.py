@@ -25,6 +25,7 @@ class Colors:
             0: C.yellow,    # Building
             1: C.white,     # Fixed, undefined
             2: C.red,       # Being removed
+            3: C.yellow,       # Selected
         }
         Values = {
             0: C.orange,
@@ -37,6 +38,7 @@ class Params:
         ComponentPinLength = 1
         ComponentMinWidth = 3
         ComponentMinHeight = 3
+        CasingsOwnPinsBases = False
     class GUI:
         ModesNames = {0:"Default",
                       1: "Console",
@@ -48,8 +50,9 @@ class Params:
         class View:
             FigSize = (7.,7.)
             DPI = 100
-            Zooms = (50, 100, 200)
+            Zooms = (30, 60, 200)
 
+            DefaultMargin = 1
             RefLineEvery = 20
             CursorLinesWidth = 1
         class Cursor:
@@ -66,6 +69,7 @@ class Params:
             Wire = '-'
             Connexion = '8'
             Casing = '-'
+            PinNameLevelColored = True
         class Controls:
             Moves = {
                 "right":np.array([1,0]),
@@ -79,18 +83,21 @@ class Params:
             Components = {'and': 'a',
                           'or' : 'o',
                           'not': 'n',
-                          'true': 'h',
-                          'false': 'g',
+                          'high': 'h',
+                          'low': 'g',
                           'wire':'w',
             }
             Close = 'f4'
+            Connect = 'c'
+            Delete = 'd'
+            Move = 'm'
             Restart = 'f5'
             Rotate = 'r'
-            Switch = 't'
+            Select = 's'
             Set = 'space'
-            Connect = 'c'
+            Switch = 't'
         class Console:
-            Height = 9
+            Height = 7
             Width = 120
         class Behaviour:
             AutoContinueComponent = True
@@ -104,7 +111,7 @@ class PinDict:
     PinTypeNames = {0:'Input',
                     1:'Output'}
 LevelsNames = {
-    None:'Undef',
+    None:'?',
     0:'LOW',
     1:'HIGH'}
 Params.Board.Max = Params.Board.Size // 2

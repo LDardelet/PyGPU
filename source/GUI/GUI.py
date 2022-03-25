@@ -12,6 +12,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from Console import ConsoleWidget, Log, LogSuccess, LogWarning, LogError
 from Values import Colors, Params
 import Circuit
+import Storage
 
 matplotlib.use("TkAgg")
 
@@ -21,10 +22,11 @@ class GUI:
         self.MainWindow.title('Logic Gates Simulator')
 
         self.LoadGUIModes()
-        self.LoadBoardData()
+        self.Library = Circuit.CLibrary()
 
         self.LoadGUI()
-        self.SetDefaultView()
+
+        self.LoadBoardData()
 
 
         self.MainWindow.mainloop()
@@ -36,11 +38,15 @@ class GUI:
                 self.CheckConnexionAvailable()
             def LeaveProps(self):
                 self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.DISABLED)
+            def ReloadProps(self):
+                self.ClearTmpComponent()
+                self.DisplayFigure.canvas.draw()
         class ConsoleModeC(ModeC):
             ID = 1
             def SetProps(self):
                 self.MainFrame.Console.ConsoleInstance.text.see(Tk.END)
-                self.MainFrame.Console.ConsoleInstance.text.focus_set()
+                if self.MainWindow.focus_get() != self.MainFrame.Console.ConsoleInstance.text:
+                    self.MainFrame.Console.ConsoleInstance.text.focus_set()
             def LeaveProps(self):
                 self.MainWindow.focus_set()
         class BuildModeC(ModeC):
@@ -65,13 +71,20 @@ class GUI:
         ModeC.GUI = self
         self.Modes = ModesDict()
 
-    def LoadBoardData(self):
-        self.Rotation = 0
+    def ClearBoard(self):
+        self.CH.LiveUpdate = False # Possibly useless
+        self.DisplayAx.cla()
 
-        self.CH = Circuit.ComponentsHandler()
-        self.Library = Circuit.CLibrary()
-        
+    def LoadBoardData(self, File = None):
+        self.Data = Storage.Open(File)
+
+        self.Rotation = 0
+        self.CH = Circuit.ComponentsHandler(self.Data.Components)
+        self.CanHighlight = [None]
+        self.Highlighed = None
         self.TmpComponents = []
+
+        self.SetView(self.Data.View)
 
     def StartComponent(self, CClass):
         self.SelectLibComponent(self.CompToButtonMap[CClass])
@@ -81,7 +94,7 @@ class GUI:
 
     def ClearTmpComponent(self):
         while self.TmpComponents:
-            self.TmpComponents.pop(0).destroy()
+            self.TmpComponents.pop(0).Clear()
 
     def OnKeyMove(self, Motion, Mod):
         if self.Modes.Console:
@@ -96,35 +109,35 @@ class GUI:
         self.Cursor = np.rint(Click).astype(int)
         self.OnMove()
 
-    def OnMove(self):
-        self.UpdateCursor()
-        self.CheckBoardLimits()
-        self.CH.MoveHighlight(self.Cursor)
-        for Component in self.TmpComponents:
-            Component.Drag(self.Cursor)
-        if self.Modes.Default:
-            self.CheckConnexionAvailable()
+    def SetView(self, View = None):
+        if View is None:
+            Log("Setting default view")
+            self.Size = Params.GUI.View.Zooms[0]
+            if (self.CH.ComponentsLimits == 0).all():
+                self.Size = Params.GUI.View.Zooms[0]
+            else:
+                self.Size = max(Params.GUI.View.Zooms[0], (self.CH.ComponentsLimits[:,1] - self.CH.ComponentsLimits[:,0]).max())
+            self.Cursor = self.CH.ComponentsLimits.mean(axis = 0).astype(int)
+            self.LeftBotLoc = self.Cursor - (self.Size // 2)
+        else:
+            self.Size = np.array(View.Size)
+            self.Cursor = np.array(View.Cursor)
+            self.LeftBotLoc = np.array(View.LeftBotLoc)
+        self.SetBoardLimits()
+        
+        self.UpdateCursorPlot()
+        self.MoveHighlight()
         self.Draw()
 
-    def CheckConnexionAvailable(self):
-        Column = self.CH.Map[self.Cursor[0], self.Cursor[1], :]
-        if not Column[-1] and (Column[:-1] != 0).sum() > 3:
-            self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.NORMAL)
-        else:
-            self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.DISABLED)
-
-    def SetDefaultView(self):
-        Log("Setting default view")
-        self.Margin = 1
-        if (self.CH.ComponentsLimits == 0).all():
-            self.Size = Params.GUI.View.Zooms[0]
-        else:
-            self.Size = max(Params.GUI.View.Zooms[0], (self.CH.ComponentsLimits[:,1] - self.CH.ComponentsLimits[:,0]).max())
-        self.Cursor = self.CH.ComponentsLimits.mean(axis = 0).astype(int)
-        self.LeftBotLoc = self.Cursor - (self.Size // 2)
-        
-        self.SetBoardLimits()
-        self.UpdateCursor()
+    def OnMove(self):
+        self.UpdateCursorPlot()
+        self.CheckBoardLimits()
+        self.MoveHighlight()
+        if self.Modes.Build:
+            for Component in self.TmpComponents:
+                Component.Drag(self.Cursor)
+        if self.Modes.Default:
+            self.CheckConnexionAvailable()
         self.Draw()
 
     def NextZoom(self):
@@ -137,31 +150,25 @@ class GUI:
         self.SetBoardLimits()
         self.Draw()
         
-    def UpdateCursor(self):
+    def UpdateCursorPlot(self):
         self.Plots['Cursor'].set_data(*self.Cursor)
         if Params.GUI.View.CursorLinesWidth:
             self.Plots['HCursor'].set_data([-Params.Board.Max, Params.Board.Max], [self.Cursor[1], self.Cursor[1]])
             self.Plots['VCursor'].set_data([self.Cursor[0], self.Cursor[0]], [-Params.Board.Max, Params.Board.Max])
-        self.MainFrame.Board.DisplayToolbar.Labels.CursorLabel['text'] = f"Cursor : {self.Cursor.tolist()}"
 
     def CheckBoardLimits(self):
-        Displacement = np.maximum(0, self.Cursor + self.Margin - (self.LeftBotLoc + self.Size))
+        Displacement = np.maximum(0, self.Cursor + Params.GUI.View.DefaultMargin - (self.LeftBotLoc + self.Size))
         if Displacement.any():
             self.LeftBotLoc += Displacement
             self.SetBoardLimits()
         else:
-            Displacement = np.maximum(0, self.LeftBotLoc - (self.Cursor - self.Margin))
+            Displacement = np.maximum(0, self.LeftBotLoc - (self.Cursor - Params.GUI.View.DefaultMargin))
             if Displacement.any():
                 self.LeftBotLoc -= Displacement
                 self.SetBoardLimits()
     def SetBoardLimits(self):
         self.DisplayAx.set_xlim(self.LeftBotLoc[0],self.LeftBotLoc[0]+self.Size)
         self.DisplayAx.set_ylim(self.LeftBotLoc[1],self.LeftBotLoc[1]+self.Size)
-
-    def ConsoleFilter(self, Callback, Symbol, Modifier):
-        if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5'): # Hardcoded so far, should be taken from Params as well
-            return
-        Callback(Symbol, Modifier)
 
     def SetWireBuildMode(self, mode=None):
         if mode is None:
@@ -178,7 +185,7 @@ class GUI:
         if self.Modes.Build:
             if self.TmpComponents:
                 if self.TmpComponents[0].Fix():
-                    self.CH.MoveHighlight(self.Cursor)
+                    self.MoveHighlight()
                     PreviousCComp = self.TmpComponents.pop(0).__class__
                     if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(PreviousCComp) or not Params.GUI.Behaviour.StopWireOnJoin or not Joins):
                         self.StartComponent(PreviousCComp)
@@ -192,6 +199,21 @@ class GUI:
     def Switch(self):
         if self.Modes.Build and self.Library.IsWire(self.TmpComponents[0]):
             self.SetWireBuildMode()
+        if self.Modes.Default:
+            self.NextHighlight()
+            self.DisplayFigure.canvas.draw()
+
+    def Select(self):
+        if not self.Modes.Default:
+            return
+        if not self.Highlighed is None:
+            if self.Highlighed not in self.TmpComponents:
+                self.TmpComponents.append(self.Highlighed)
+                self.Highlighed.Select(True)
+            else:
+                self.TmpComponents.remove(self.Highlighed)
+                self.Highlighed.Select(False)
+            self.DisplayFigure.canvas.draw()
 
     def Rotate(self, var):
         self.Rotation = (self.Rotation + 1) & 0b11
@@ -200,14 +222,39 @@ class GUI:
         if self.TmpComponents:
             self.Draw()
 
+    def MoveHighlight(self):
+        self.CanHighlight = [Group for Group in self.CH.CursorGroups(self.Cursor) if len(Group) > 1] + self.CH.CursorComponents(self.Cursor) + self.CH.CursorCasings(self.Cursor) # Single item groups would create odd behaviour
+        if not self.CanHighlight:
+            self.CanHighlight = [None]
+        if self.Highlighed not in self.CanHighlight:
+            self.SwitchHighlight(self.CanHighlight[0])
+    def NextHighlight(self):
+        self.SwitchHighlight(self.CanHighlight[(self.CanHighlight.index(self.Highlighed)+1)%len(self.CanHighlight)])
+    def SwitchHighlight(self, Item):
+        if Item == self.Highlighed:
+            return
+        if not self.Highlighed is None:
+            self.Highlighed.Highlight(False)
+        self.Highlighed = Item
+        if not Item is None:
+            self.Highlighed.Highlight(True)
+
     def Draw(self):
-        self.MainFrame.Board.DisplayToolbar.Labels.ComponentLabel['text'] = self.CH.Repr(self.Cursor)
+        GroupsInfo = self.CH.GroupsInfo(self.Cursor)
+        self.MainFrame.Board.DisplayToolbar.Labels.CursorLabel['text'] = f"{self.Cursor.tolist()}" + bool(GroupsInfo)*": " + self.CH.GroupsInfo(self.Cursor)
+        self.MainFrame.Board.DisplayToolbar.Labels.CasingLabel['text'] = self.CH.CasingsInfo(self.Cursor)
         self.DisplayFigure.canvas.draw()
 
     def _ToggleConnexion(self):
         self.CH.ToggleConnexion(self.Cursor)
-        self.CH.MoveHighlight(self.Cursor)
+        self.MoveHighlight()
         self.Draw()
+    def CheckConnexionAvailable(self):
+        Column = self.CH.Map[self.Cursor[0], self.Cursor[1], :]
+        if not Column[-1] and (Column[:-1] != 0).sum() > 3:
+            self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.NORMAL)
+        else:
+            self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.DISABLED)
 
     def LoadGUI(self):
         self._Icons = {}
@@ -221,22 +268,31 @@ class GUI:
         self.MainFrame.AddFrame("RightPanel", 1, 2, Side = Tk.TOP)
         self.MainFrame.AddFrame("Console", 2, 0, columnspan = 3, Side = Tk.LEFT)
 
+        self.LoadMenu()
         self.LoadConsole()
         self.LoadBoard()
         self.LoadRightPanel()
         self.LoadLibraryGUI()
+
+    def Open(self):
+        raise NotImplementedError
+    def Save(self):
+        raise NotImplementedError
 
     def LoadKeys(self):
         Controls = Params.GUI.Controls
         self.KeysFuctionsDict = {}
         self.MainWindow.bind('<Key>', lambda e: self.ConsoleFilter(self.KeysFuctionsDict.get(e.keysym.lower(), Void), e.keysym.lower(), e.state))
 
+        self.AddControlKey(Controls.Connect, lambda key, mod: self._ToggleConnexion())
         self.AddControlKey(Controls.Close,   lambda key, mod: self.Close(0))
+        self.AddControlKey(Controls.Delete,  lambda key, mod: self.Delete())
+        self.AddControlKey(Controls.Move,    lambda key, mod: self.Move())
         self.AddControlKey(Controls.Restart, lambda key, mod: self.Close(1))
         self.AddControlKey(Controls.Rotate,  lambda key, mod: self.Rotate(mod))
-        self.AddControlKey(Controls.Switch,  lambda key, mod: self.Switch())
+        self.AddControlKey(Controls.Select,  lambda key, mod: self.Select())
         self.AddControlKey(Controls.Set,     lambda key, mod: self.Set())
-        self.AddControlKey(Controls.Connect, lambda key, mod: self._ToggleConnexion())
+        self.AddControlKey(Controls.Switch,  lambda key, mod: self.Switch())
         for Key in Controls.Moves:
             self.AddControlKey(Key, lambda key, mod: self.OnKeyMove(Params.GUI.Controls.Moves[key], mod))
         for Mode in self.Modes.List:
@@ -245,11 +301,46 @@ class GUI:
             self.AddControlKey(Mode.Key, lambda key, mod, Mode = Mode: Mode())
 
         #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__)) # Override to check key value
+    def ConsoleFilter(self, Callback, Symbol, Modifier):
+        if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5'): # Hardcoded so far, should be taken from Params as well
+            return
+        Callback(Symbol, Modifier)
 
     def AddControlKey(self, Key, Callback):
         if Key in self.KeysFuctionsDict:
             raise ValueError(f"Used key : {Key}")
         self.KeysFuctionsDict[Key] = Callback
+
+    def LoadMenu(self):
+        MainMenu = Tk.Menu(self.MainWindow)
+        FMenu = Tk.Menu(MainMenu, tearoff=0)
+        FMenu.add_command(label="New", command=self.New)
+        FMenu.add_command(label="Open", command=self.Open)
+        FMenu.add_command(label="Save", command=self.Save)
+        FMenu.add_separator()
+        FMenu.add_command(label="Exit", command=self.Close)
+        MainMenu.add_cascade(label="File", menu=FMenu)
+
+        EMenu = Tk.Menu(MainMenu, tearoff=0)
+        EMenu.add_command(label="Undo", command=self.Undo)
+        EMenu.add_command(label="Options", command=self.Options)
+        MainMenu.add_cascade(label="Edit", menu=EMenu)
+
+        HMenu = Tk.Menu(MainMenu, tearoff=0)
+        HMenu.add_command(label="Help Index", command=Void)
+        HMenu.add_command(label="About...", command=self.About)
+        MainMenu.add_cascade(label="Help", menu=HMenu)
+
+        self.MainWindow.config(menu=MainMenu)
+
+    def New(self):
+        raise NotImplementedError
+    def Undo(self):
+        raise NotImplementedError
+    def Options(self):
+        raise NotImplementedError
+    def About(self):
+        raise NotImplementedError
 
     def LoadConsole(self):
         #self.MainFrame.Console.AddWidget(Console.ConsoleWidget, "Console", _locals=locals(), exit_callback=self.MainWindow.destroy)
@@ -257,7 +348,7 @@ class GUI:
         ConsoleInstance.pack(fill=Tk.BOTH, expand=True)
         self.MainFrame.Console.RemoveDefaultName()
         self.MainFrame.Console.AdvertiseChild(ConsoleInstance, "ConsoleInstance")
-        ConsoleInstance.text.bind('<Button-1>', lambda e:self.Modes.Console())
+        ConsoleInstance.text.bind('<FocusIn>', lambda e:self.Modes.Console())
 
     def LoadBoard(self):
         self.MainFrame.Board.AddFrame("Controls", Side = Tk.LEFT)
@@ -316,10 +407,10 @@ class GUI:
 
     def LoadDisplayToolbar(self):
         self.MainFrame.Board.DisplayToolbar.AddFrame("Buttons", Side = Tk.TOP, Border = False)
-        self.MainFrame.Board.DisplayToolbar.AddFrame("Labels", Side = Tk.TOP, Border = False)
+        self.MainFrame.Board.DisplayToolbar.AddFrame("Labels", Border = False)
         self.MainFrame.Board.DisplayToolbar.Buttons.RemoveDefaultName()
         self.DisplayToolbar = NavigationToolbar2Tk(self.DisplayCanvas, self.MainFrame.Board.DisplayToolbar.Buttons.frame)
-        NewCommands = {'!button':self.SetDefaultView, # Remap Home button
+        NewCommands = {'!button':self.SetView, # Remap Home button
                        '!checkbutton2':self.NextZoom # Remap zoom button
         }
         RemovedButtons = ('!button2', # Left arrow
@@ -334,8 +425,8 @@ class GUI:
         for button, command in NewCommands.items():
             self.DisplayToolbar.children[button].config(command=command)
         self.DisplayToolbar.update()
-        self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "CursorLabel", text = "")
-        self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "ComponentLabel", text = "")
+        self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "CursorLabel", row = 0, column = 0, text = "")
+        self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "CasingLabel", row = 1, column = 0, text = "")
 
     def LoadRightPanel(self):
         pass
@@ -387,7 +478,7 @@ class ModeC:
         self.Color = Colors.GUI.Modes[self.ID]
         if self.Current is None:
             ModeC.Current = self
-    def __call__(self, Advertise = True):
+    def __call__(self, Advertise = False):
         if self.Current == self:
             self.__class__.ReloadProps(self.GUI) # This writing allows to make XProps functions like GUI class methods
             return

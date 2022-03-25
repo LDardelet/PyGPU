@@ -6,8 +6,8 @@ from Console import Log, LogSuccess, LogWarning, LogError
 import DefaultLibrary
 
 class ComponentsHandler:
-    def __init__(self):
-        GroupClass.Handler = self
+    def __init__(self, LoadedData = None):
+        GroupC.Handler = self
         Components.ComponentBase.Handler = self
 
         self.MaxValue = 0
@@ -16,7 +16,6 @@ class ComponentsHandler:
         self.ComponentsLimits = np.array([[0,0], [0.,0]])
         self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 9), dtype = int)
 
-        self.Highlighed = None
         self.Groups = {} # Groups share wire transmissions
 
         self.LiveUpdate = True
@@ -57,11 +56,17 @@ class ComponentsHandler:
         self.MaxValue += 1
         Component.ID = self.MaxValue
         self.Components[Component.ID] = Component
-        Component.Group = GroupClass(Component)
+        Component.Group = GroupC(Component)
         for x, y, theta in Component.AdvertisedLocations:
             self.Map[x,y,theta] = Component.ID
         if isinstance(Component, Components.CasedComponent):
             self.Casings[Component.ID] = Component
+            if Params.Board.CasingsOwnPinsBases:
+                Component.Group = GroupC(Component)
+            else:
+                Component.Group = CasingGroup
+        else:
+            Component.Group = GroupC(Component)
 
     def DestroyComponent(self, ID): # Completely removes the component by its ID. Does not handle links.
         Component = self.Components.pop(ID)
@@ -119,26 +124,14 @@ class ComponentsHandler:
         except KeyError:
             LogError(f"ID {ID1} was not advertized for ID {ID2} (2)")
 
-    def MoveHighlight(self, Location):
-        Groups = list({self.Components[ID].Group for ID in self.Map[Location[0], Location[1],:-1] if ID})
-        if Groups:
-            return self.SwitchHighlight(Groups[0])
-        else:
-            for Component in self.Casings.values():
-                if Component.Contains(Location):
-                    return self.SwitchHighlight(Component)
-        self.SwitchHighlight(None)
+    def CursorGroups(self, Location):
+        return list({self.Components[ID].Group for ID in self.Map[Location[0], Location[1],:-1] if ID})
+    def CursorComponents(self, Location):  # We remove ComponentPin from single component highlight as nothing can be done with them alone
+        return list({self.Components[ID] for ID in self.Map[Location[0], Location[1],:-1] if (ID and not isinstance(self.Components[ID], Components.ComponentPin))})
+    def CursorCasings(self, Location):
+        return list({Component for Component in self.Casings.values() if Component.Contains(Location)})
 
-    def SwitchHighlight(self, Item):
-        if Item == self.Highlighed:
-            return
-        if not self.Highlighed is None:
-            self.Highlighed.Highlight(False)
-        self.Highlighed = Item
-        if not Item is None:
-            self.Highlighed.Highlight(True)
-
-    def Repr(self, Location):
+    def GroupsInfo(self, Location):
         NWires = 0
         Data = []
         Keypoint = False
@@ -155,7 +148,11 @@ class ComponentsHandler:
         if not Groups:
             return ""
 
-        return ', '.join([f'Group {Group.ID} : '+ ', '.join([str(Component) for Component in Components])+f' ({LevelsNames[Group.Value]})' for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
+        #return ', '.join([f'Group {Group.ID} : '+ ', '.join([str(Component) for Component in Components])+f' ({LevelsNames[Group.Value]})' for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
+        return ', '.join([f'{Group}' + ': '*bool(Group.__repr__())+ ', '.join([str(Component) for Component in Components]) for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
+
+    def CasingsInfo(self, Location):
+        return ', '.join([str(Casing) for Casing in self.CursorCasings(Location)])
 
     def Wired(self, Location):
         for ID in self.Map[Location[0], Location[1], :8]:
@@ -165,7 +162,7 @@ class ComponentsHandler:
     def HasItem(self, Location):
         return self.Map[Location[0], Location[1], :8].any()
 
-class GroupClass:
+class GroupC:
     Handler = None # Allows to handles group storage
     def __init__(self, BaseComponent): # To avoid creating useless new IDs, a group ID is define by the ID of its first component. May lead to issues later on, but unlikely.
         self.ID = BaseComponent.ID
@@ -178,14 +175,21 @@ class GroupClass:
         self.Value = None
         self.SetBy = None
 
-    def Merge(self, Group): # We keep the lowest ID possible.
-        #if self.ID > Group.ID:
-        #    self, Group = Group, self # May not work, not checked yet. Removed for now
+    def Merge(self, Group): 
         self.HighlightPlots += Group.HighlightPlots
         for Component in Group.Components:
             Component.Group = self
         self.Components.update(Group.Components)
         del self.Handler.Groups[Group.ID]
+
+        if self.IsSet:
+            if Group.IsSet:
+                self.DualSetWarning(Group.SetBy)
+            else:
+                self.SetValue(self.Value, self.SetBy)
+        else:
+            if Group.IsSet:
+                self.SetValue(Group.Value, Group.SetBy)
 
     def AddComponent(self, Component):
         Component.Group = self
@@ -194,10 +198,18 @@ class GroupClass:
 
     def SetValue(self, Value, Component):
         if not self.SetBy is None and Component != self.SetBy:
-            LogWarning(f"Group {self.ID} set by {Component} and {self.SetBy}")
+            self.DualSetWarning(Component)
+            return
         self.SetBy = Component
         self.Value = Value
         self.UpdateGroupColor()
+
+    def DualSetWarning(self, Component):
+        LogWarning(f"Group {self.ID} set by {Component} and {self.SetBy}")
+
+    @property
+    def IsSet(self):
+        return not self.Value is None
 
     def UpdateGroupColor(self): # May be more efficient to update plots directly. However, it forbids hot board modifications
         for Component in self.Components:
@@ -205,13 +217,29 @@ class GroupClass:
 
     def Highlight(self, var):
         for Component in self.Components:
-            Component.Highlight(var)
+            if type(Component) != Components.ComponentPin:
+                Component.Highlight(var)
+    def Select(self, var):
+        for Component in self.Components:
+            if type(Component) != Components.ComponentPin:
+                Component.Select(var)
+    def Clear(self):
+        for Component in self.Components:
+            Component.Clear()
 
     def __repr__(self):
-        return f"Group {self.ID}"
+        return f"Group {self.ID} ({LevelsNames[self.Value]})"
+    def __len__(self):
+        return len(self.Components)
+
+class CasingGroupC:
+    Value = None
+    def __repr__(self):
+        return ""
+CasingGroup = CasingGroupC()
 
 # Component template signature :
-# (Location, West, East, North=None, South=None, Callback = None, Schematics = None, ForceWidth = None, ForceHeight = None)
+# (InputPins, OutputPins, Callback, Schematics, ForceWidth, ForceHeight, DisplayPinNumbering, Symbol)
 
 class CGroup:
     def __init__(self, GName, GComponents = {}):
