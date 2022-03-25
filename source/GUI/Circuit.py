@@ -7,9 +7,6 @@ import DefaultLibrary
 
 class ComponentsHandler:
     def __init__(self, LoadedData = None):
-        GroupC.Handler = self
-        Components.ComponentBase.Handler = self
-
         self.MaxValue = 0
         self.Components = {}
         self.Casings = {}
@@ -20,31 +17,55 @@ class ComponentsHandler:
 
         self.LiveUpdate = True
 
-    def Register(self, NewComponent, MustCheck = True):
-        if MustCheck and not self.CheckRoom(NewComponent):
+    def NewGroup(self, Comp):
+        Group = GroupC(Comp)
+        self.Groups[Group.ID] = Group
+        return Group
+
+    def Register(self, NewComponent):
+        if not NewComponent.CanFix:
+            return False
+        if not self.CheckRoom(NewComponent):
             LogWarning(f"Unable to register the new component, due to position conflicts")
             return False
+        for Child in NewComponent.Children:
+            if not Child.CanFix:
+                return False
+            if not self.CheckRoom(Child):
+                LogWarning(f"Unable to register the new component, due to child {Child} position conflict")
+                return False
 
+        for Child in NewComponent.Children:
+            self.SetComponent(Child)
+            self.LinkToGrid(Child)
+            Child.Fix()
         self.SetComponent(NewComponent)
+        self.LinkToGrid(NewComponent)
+        NewComponent.Fix()
+
+        if self.LiveUpdate:
+            NewComponent() 
+
+        return True
+
+    def LinkToGrid(self, NewComponent):
         for x,y,_ in NewComponent.AdvertisedLocations:
             ConnID = self.Map[x,y,-1]
             if ConnID == NewComponent.ID: # Need to check for location forbidden connexions
                 continue
-            if ConnID and self.Components[ConnID].Displayed: # Start by linking existing connexions on the advertized locations
+            if ConnID and self.Components[ConnID].Displayed: # Start by linking existing shown connexions on the advertized locations
                 self.Components[ConnID].UpdateConnexions(self.Map[x,y,:])
                 self.AddLink(NewComponent.ID, ConnID)
-
         for x,y in NewComponent.AdvertisedConnexions: # Add automatically created connexions, in particular to existing hidden connexions
             ConnID = self.Map[x,y,-1]
             if ConnID == NewComponent.ID: # Need to check for location forbidden connexions
                 continue
             if ConnID:
-                if not self.Components[ConnID].LinkedTo(NewComponent.ID):# If NewConnexion should already be within NewLocations, hidden connexions would have been avoided due to previous method
+                if not self.Components[ConnID].LinkedTo(NewComponent.ID):# If NewConnexion should already be within NewLocations, hidden connexions are avoided in previous method
                     self.Components[ConnID].UpdateConnexions(self.Map[x,y,:])
                     self.AddLink(NewComponent.ID, ConnID)
             else:
                 self.AddConnexion((x,y)) # If not, we create it
-        return True
 
     def CheckRoom(self, NewComponent):
         NewLocations = NewComponent.AdvertisedLocations
@@ -56,17 +77,17 @@ class ComponentsHandler:
         self.MaxValue += 1
         Component.ID = self.MaxValue
         self.Components[Component.ID] = Component
-        Component.Group = GroupC(Component)
+        Component.Group = self.NewGroup(Component)
         for x, y, theta in Component.AdvertisedLocations:
             self.Map[x,y,theta] = Component.ID
         if isinstance(Component, Components.CasedComponent):
             self.Casings[Component.ID] = Component
             if Params.Board.CasingsOwnPinsBases:
-                Component.Group = GroupC(Component)
+                Component.Group = self.NewGroup(Component)
             else:
                 Component.Group = CasingGroup
         else:
-            Component.Group = GroupC(Component)
+            Component.Group = self.NewGroup(Component)
 
     def DestroyComponent(self, ID): # Completely removes the component by its ID. Does not handle links.
         Component = self.Components.pop(ID)
@@ -112,7 +133,7 @@ class ComponentsHandler:
         self.Components[ID1].Links.add(ID2)
         self.Components[ID2].Links.add(ID1)
         if self.Components[ID1].Group != self.Components[ID2].Group:
-            self.Components[ID1].Group.Merge(self.Components[ID2].Group)
+            del self.Groups[self.Components[ID1].Group.Merge(self.Components[ID2].Group)]
 
     def BreakLink(self, ID1, ID2): 
         try:
@@ -163,10 +184,8 @@ class ComponentsHandler:
         return self.Map[Location[0], Location[1], :8].any()
 
 class GroupC:
-    Handler = None # Allows to handles group storage
     def __init__(self, BaseComponent): # To avoid creating useless new IDs, a group ID is define by the ID of its first component. May lead to issues later on, but unlikely.
         self.ID = BaseComponent.ID
-        self.Handler.Groups[self.ID] = self
         BaseComponent.Group = self
         self.Components = {BaseComponent}
 
@@ -180,7 +199,6 @@ class GroupC:
         for Component in Group.Components:
             Component.Group = self
         self.Components.update(Group.Components)
-        del self.Handler.Groups[Group.ID]
 
         if self.IsSet:
             if Group.IsSet:
@@ -190,6 +208,7 @@ class GroupC:
         else:
             if Group.IsSet:
                 self.SetValue(Group.Value, Group.SetBy)
+        return Group.ID
 
     def AddComponent(self, Component):
         Component.Group = self
@@ -241,21 +260,24 @@ CasingGroup = CasingGroupC()
 # Component template signature :
 # (InputPins, OutputPins, Callback, Schematics, ForceWidth, ForceHeight, DisplayPinNumbering, Symbol)
 
-class CGroup:
-    def __init__(self, GName, GComponents = {}):
-        self.Name = GName
+class BookC:
+    def __init__(self, BookName, BookComponents = {}):
+        self.Name = BookName
         self.Components = []
-        for Name, Values in GComponents.items():
-            if Name in self.__dict__:
-                LogWarning(f"Component name {Name} already exists in this library")
+        for CompName, CompData in BookComponents.items():
+            if CompName in self.__dict__:
+                LogWarning(f"Component name {CompName} already exists in this book")
                 continue
-            self.Components.append(Name)
-            if isinstance(Values, type(Components.ComponentBase)):
-                self.__dict__[Name] = Values
+            self.Components.append(CompName)
+            if isinstance(CompData, type(Components.ComponentBase)):
+                self.__dict__[CompName] = CompData
+                CompData.Book = self
             else:
-                self.AddComponentClass(Name, Values)
+                self.AddComponentClass(CompName, CompData)
+    def __repr__(self):
+        return self.Name
 
-    def AddComponentClass(self, Name, Values):
+    def AddComponentClass(self, CompName, Values):
         try:
             InputPinsDef, OutputPinsDef, Callback, Schematics, ForceWidth, ForceHeight, DisplayPinNumbering, Symbol = Values
             PinIDs = set()
@@ -265,11 +287,12 @@ class CGroup:
         except ValueError:
             LogWarning(f"Unable to load component {Name} from its definition")
             return
-        self.__dict__[Name] = type(Name, 
+        self.__dict__[CompName] = type(CompName, 
                                    (Components.CasedComponent, ), 
                                    {
                                        '__init__': Components.CasedComponent.__init__,
-                                       'CName': Name,
+                                       'CName': CompName,
+                                       'Book': self.Name,
                                        'InputPinsDef'    : InputPinsDef,
                                        'OutputPinsDef'    : OutputPinsDef,
                                        'Callback'   : Callback,
@@ -282,13 +305,13 @@ class CGroup:
 class CLibrary:
     ComponentBase = Components.ComponentBase
     def __init__(self):
-        self.Groups = []
-        self.AddGroup(CGroup('Standard', DefaultLibrary.Definitions))
+        self.Books = []
+        self.AddBook(BookC('Standard', DefaultLibrary.Definitions))
         self.Wire = Components.Wire
 
-    def AddGroup(self, Group):
-        self.__dict__[Group.Name] = Group
-        self.Groups.append(Group.Name)
+    def AddBook(self, Book):
+        self.__dict__[Book.Name] = Book
+        self.Books.append(Book.Name)
 
     def IsWire(self, C): # Checks if class or class instance
         return C == Components.Wire or isinstance(C, Components.Wire)

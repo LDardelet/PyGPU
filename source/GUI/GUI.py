@@ -184,7 +184,7 @@ class GUI:
         Joins = self.CH.HasItem(self.Cursor)
         if self.Modes.Build:
             if self.TmpComponents:
-                if self.TmpComponents[0].Fix():
+                if self.CH.Register(self.TmpComponents[0]):
                     self.MoveHighlight()
                     PreviousCComp = self.TmpComponents.pop(0).__class__
                     if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(PreviousCComp) or not Params.GUI.Behaviour.StopWireOnJoin or not Joins):
@@ -434,19 +434,20 @@ class GUI:
     def LoadLibraryGUI(self):
         self.CompToButtonMap = {}
         self.CurrentCompButton = None
-        for GName in self.Library.Groups:
-            Group = self.Library.__dict__[GName]
-            GroupFrame = self.MainFrame.Library.AddFrame(GName, Side = Tk.TOP, NameDisplayed = True)
-            CompFrame = GroupFrame.AddFrame("CompFrame", NameDisplayed = False)
-            for nComp, CName in enumerate(Group.Components):
+        for BookName in self.Library.Books:
+            Book = self.Library.__dict__[BookName]
+            BookFrame = self.MainFrame.Library.AddFrame(BookName, Side = Tk.TOP, NameDisplayed = True)
+            CompFrame = BookFrame.AddFrame("CompFrame", NameDisplayed = False)
+            for nComp, CompName in enumerate(Book.Components):
                 row = nComp // Params.GUI.Library.Columns
                 column = nComp % Params.GUI.Library.Columns
-                Component = Group.__dict__[CName]
+                CompClass = Book.__dict__[CompName]
                 Add = ''
-                if CName.lower() in Params.GUI.Controls.Components:
-                    Add = f' ({Params.GUI.Controls.Components[CName.lower()]})'
-                    self.AddControlKey(Params.GUI.Controls.Components[CName.lower()], lambda key, mod, CClass = Component: self.StartComponent(CClass))
-                self.CompToButtonMap[Component] = CompFrame.AddWidget(Tk.Button, f"{GName}.{CName}", row = row, column = column, text = CName+Add, height = Params.GUI.Library.ComponentHeight, command = lambda CClass = Component: self.StartComponent(CClass))
+                if CompName.lower() in Params.GUI.Controls.Components:
+                    Add = f' ({Params.GUI.Controls.Components[CompName.lower()]})'
+                    self.AddControlKey(Params.GUI.Controls.Components[CompName.lower()], lambda key, mod, CompClass = CompClass: self.StartComponent(CompClass))
+                self.CompToButtonMap[CompClass] = CompFrame.AddWidget(Tk.Button, f"{BookName}.{CompName}", row = row, column = column, text = CompName+Add, height = Params.GUI.Library.ComponentHeight, 
+                                                                        command = lambda CompClass = CompClass: self.StartComponent(CompClass))
 
     def SelectLibComponent(self, Button):
         if Button == self.CurrentCompButton:

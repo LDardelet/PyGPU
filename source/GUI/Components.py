@@ -49,11 +49,11 @@ class StateHandler:
 
 class ComponentBase:
     Board = None
-    Handler = None
     DefaultLinewidth = 0
     DefaultMarkersize = 0
     RotationAllowed = True
     CName = None
+    Book = None
     def __init__(self, Location=None, Rotation=None):
         if not Location is None: # Happend for a child component, in which case both values are defined by the parents
             self.Location = np.array(Location)
@@ -101,18 +101,10 @@ class ComponentBase:
             Plot.set_linewidth(self.DefaultLinewidth*Factor)
             Plot.set_markersize(self.DefaultMarkersize*Factor)
 
-    def Fix(self, MustCheck = True):
-        if not self.CanFix:
-            return False
+    def Fix(self):
         if self.State.Fixed:
             raise ValueError("Component already fixed")
-        if self.Handler.Register(self, MustCheck):
-            self.State.Fix()
-            if self.Handler.LiveUpdate:
-                self()
-            return True
-        else:
-            return False
+        self.State.Fix()
 
     def Select(self, var):
         if var:
@@ -173,6 +165,9 @@ class ComponentBase:
 
     def __repr__(self):
         return f"{self.CName} ({self.ID})"
+    @property
+    def LibRef(self):
+        return f"{self.Book}.{self.CName}"
 
 class CasedComponent(ComponentBase): # Template to create any type of component
     DefaultLinewidth = Params.GUI.PlotsWidths.Casing
@@ -275,19 +270,6 @@ class CasedComponent(ComponentBase): # Template to create any type of component
     @property
     def InputReady(self):
         return (not None in self.Input)
-
-    def Fix(self, MustCheck = True): # Must override to take children into account. 
-        if not self.Handler.CheckRoom(self):
-            LogWarning(f"Unable to register the new component, due to casing location")
-            return False
-        for Pin in self.Children:
-            if not self.Handler.CheckRoom(Pin): # We check first all locations
-                LogWarning(f"Unable to register the new component, due to pin {Pin} location")
-                return False
-        for Pin in self.Children:
-            Pin.Fix(MustCheck = False)
-        ComponentBase.Fix(self, MustCheck = False) # Must set component last, as it matters if live update
-        return True
 
     def Drag(self, Cursor):
         self.Location = np.array(Cursor)
