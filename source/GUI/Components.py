@@ -67,6 +67,7 @@ class ComponentBase:
         self.LevelsPlots = []
         self.NeutralPlots = []
 
+        self.Children = set()
         self.Links = set()
 
         self.Group = None
@@ -214,7 +215,6 @@ class CasedComponent(ComponentBase): # Template to create any type of component
 
         self.text(*self.TextLocation, s = (self.CName, self.Symbol)[bool(self.Symbol)], color = self.State.Color, va = 'center', ha = 'center', rotation = self.TextRotation)
 
-        self.Pins = {}
         self.InputPins = []
         self.OutputPins = []
         def PinKey(Side, Index):
@@ -241,8 +241,9 @@ class CasedComponent(ComponentBase): # Template to create any type of component
                 Offset = self.LocToSWOffset + np.array([1+nPin, 0])
             else:
                 raise ValueError(f"Wrong component {self.__class__.__name__} definition")
-            self.Pins[PinKey(Side, Index)] = ComponentPin(self, Offset, Side, Type, Name)
-            PinsList.append(self.Pins[PinKey(Side, Index)])
+            Pin = ComponentPin(self, Offset, Side, Type, Index, Name)
+            self.Children.add(Pin)
+            PinsList.append(Pin)
 
         if len(self.OutputPins) == 1:
             wrapper = lambda a:[a]
@@ -279,11 +280,11 @@ class CasedComponent(ComponentBase): # Template to create any type of component
         if not self.Handler.CheckRoom(self):
             LogWarning(f"Unable to register the new component, due to casing location")
             return False
-        for PName, Pin in self.Pins.items():
+        for Pin in self.Children:
             if not self.Handler.CheckRoom(Pin): # We check first all locations
-                LogWarning(f"Unable to register the new component, due to pin {PName} location")
+                LogWarning(f"Unable to register the new component, due to pin {Pin} location")
                 return False
-        for Pin in self.Pins.values():
+        for Pin in self.Children:
             Pin.Fix(MustCheck = False)
         ComponentBase.Fix(self, MustCheck = False) # Must set component last, as it matters if live update
         return True
@@ -305,7 +306,7 @@ class CasedComponent(ComponentBase): # Template to create any type of component
         self.Plots[4].set_y(TLoc[1])
         self.Plots[4].set_rotation(self.TextRotation)
 
-        for Pin in self.Pins.values():
+        for Pin in self.Children:
             Pin.UpdateLocation()
 
     @property
@@ -330,23 +331,23 @@ class CasedComponent(ComponentBase): # Template to create any type of component
 
     def destroy(self):
         ComponentBase.destroy(self)
-        for Pin in self.Pins.values():
+        for Pin in self.Children:
             Pin.destroy()
 
     def Highlight(self, var):
         ComponentBase.Highlight(self, var)
-        for Pin in self.Pins.values():
+        for Pin in self.Children:
             Pin.Highlight(var)
     def Select(self, var):
         ComponentBase.Select(self, var)
-        for Pin in self.Pins.values():
+        for Pin in self.Children:
             Pin.Select(var)
 
     @property
     def AdvertisedLocations(self):
         if Params.Board.CasingsOwnPinsBases: # Use if pins bases are considered casing parts
-            Locations = np.zeros((9*len(self.Pins),3), dtype = int)
-            for nPin, Pin in enumerate(self.Pins.values()):
+            Locations = np.zeros((9*len(self.Children),3), dtype = int)
+            for nPin, Pin in enumerate(self.Children):
                 Locations[9*nPin:9*(nPin+1),:2] = Pin.PinBaseLocation
                 Locations[9*nPin:9*(nPin+1),-1] = np.arange(9)
             return Locations
@@ -357,10 +358,11 @@ class ComponentPin(ComponentBase):
     DefaultLinewidth = Params.GUI.PlotsWidths.Wire
     DefaultMarkersize = 0
     CName = "Pin"
-    def __init__(self, Parent, PinBaseOffset, Side, Type, Name = ''):
+    def __init__(self, Parent, PinBaseOffset, Side, Type, Index, Name = ''):
         ComponentBase.__init__(self)
         self.Parent = Parent
         self.Type = Type
+        self.Index = 0
         self.Name = Name
         self.BaseRotation = {PinDict.E:0,
                              PinDict.N:1,
