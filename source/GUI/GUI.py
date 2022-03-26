@@ -19,10 +19,11 @@ matplotlib.use("TkAgg")
 class GUI:
     def __init__(self):
         self.MainWindow = Tk.Tk()
-        self.MainWindow.title('Logic Gates Simulator')
 
         self.LoadGUIModes()
         self.Library = Circuit.CLibrary()
+        self.FH = Storage.FileHandler()
+        self.SetTitle()
 
         self.LoadGUI()
 
@@ -55,7 +56,7 @@ class GUI:
                 self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.HiddenAlpha)
             def LeaveProps(self):
                 self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.DefaultAlpha)
-                self.SelectLibComponent(None)
+                self.ColorLibComponent(None)
             def ReloadProps(self):
                 self.ClearTmpComponent()
         class ModesDict:
@@ -75,19 +76,48 @@ class GUI:
         self.CH.LiveUpdate = False # Possibly useless
         self.DisplayAx.cla()
 
-    def LoadBoardData(self, File = None):
-        self.Data = Storage.Open(File)
+    def SaveBoardData(self, SelectFilename = False):
+        if self.FH.Filename is None or SelectFilename:
+            Filename = Tk.filedialog.asksaveasfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('Fichier JSON', '.json')], defaultextension = '.json')
+            if not Filename is None:
+                self.FH.Filename = Filename
+                self.SetTitle()
+        self.FH.Save(handler = self.CH)
+
+    def Open(self, Ask):
+        if Ask:
+            Filename = Tk.filedialog.askopenfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('Fichier JSON', '.json')], defaultextension = '.json')
+            if not Filename is None:
+                self.LoadBoardData(Filename)
+        else:
+            self.LoadBoardData()
+
+    def LoadBoardData(self, Filename = None):
+        if not os.path.exists(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder):
+            os.mkdir(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder)
+
+        if Filename is None:
+            self.CH = Circuit.ComponentsHandler()
+        else:
+            D = self.FH.Load(Filename)
+            self.CH = D['handler']
 
         self.Rotation = 0
-        self.CH = Circuit.ComponentsHandler(self.Data.Components)
         self.CanHighlight = [None]
         self.Highlighed = None
         self.TmpComponents = []
 
-        self.SetView(self.Data.View)
+        self.SetView()
+
+    def SetTitle(self):
+        if self.FH.Filename is None:
+            BoardName = 'New'
+        else:
+            BoardName = self.FH.Filename.split('/')[-1]
+        self.MainWindow.title(Params.GUI.Name + f" ({BoardName})")
 
     def StartComponent(self, CClass):
-        self.SelectLibComponent(self.CompToButtonMap[CClass])
+        self.ColorLibComponent(self.CompToButtonMap[CClass])
         self.Modes.Build()
         self.TmpComponents.append(CClass(self.Cursor, self.Rotation))
         self.Draw()
@@ -120,9 +150,7 @@ class GUI:
             self.Cursor = self.CH.ComponentsLimits.mean(axis = 0).astype(int)
             self.LeftBotLoc = self.Cursor - (self.Size // 2)
         else:
-            self.Size = np.array(View.Size)
-            self.Cursor = np.array(View.Cursor)
-            self.LeftBotLoc = np.array(View.LeftBotLoc)
+            raise NotImplementedError
         self.SetBoardLimits()
         
         self.UpdateCursorPlot()
@@ -270,19 +298,14 @@ class GUI:
 
         self.LoadMenu()
         self.LoadConsole()
-        self.LoadBoard()
+        self.LoadCenterPanel()
         self.LoadRightPanel()
         self.LoadLibraryGUI()
 
-    def Open(self):
-        raise NotImplementedError
-    def Save(self):
-        raise NotImplementedError
-
     def LoadKeys(self):
         Controls = Params.GUI.Controls
-        self.KeysFuctionsDict = {}
-        self.MainWindow.bind('<Key>', lambda e: self.ConsoleFilter(self.KeysFuctionsDict.get(e.keysym.lower(), Void), e.keysym.lower(), e.state))
+        self.KeysFunctionsDict = {}
+        self.MainWindow.bind('<Key>', lambda e: self.ConsoleFilter(self.KeysFunctionsDict.get(e.keysym.lower(), {}).get(e.state, Void), e.keysym.lower(), e.state))
 
         self.AddControlKey(Controls.Connect, lambda key, mod: self._ToggleConnexion())
         self.AddControlKey(Controls.Close,   lambda key, mod: self.Close(0))
@@ -300,23 +323,33 @@ class GUI:
                 continue
             self.AddControlKey(Mode.Key, lambda key, mod, Mode = Mode: Mode())
 
+        CTRL = 4
+        SHIFT = 1
+        self.AddControlKey('s', lambda key, mod:self.SaveBoardData(), Mod = CTRL)
+        self.AddControlKey('s', lambda key, mod:self.SaveBoardData(SelectFilename=True), Mod = CTRL+SHIFT)
+        self.AddControlKey('o', lambda key, mod:self.Open(Ask=True), Mod = CTRL)
+        self.AddControlKey('n', lambda key, mod:self.Open(Ask=False), Mod = CTRL)
+
         #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__)) # Override to check key value
     def ConsoleFilter(self, Callback, Symbol, Modifier):
         if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5'): # Hardcoded so far, should be taken from Params as well
             return
         Callback(Symbol, Modifier)
 
-    def AddControlKey(self, Key, Callback):
-        if Key in self.KeysFuctionsDict:
-            raise ValueError(f"Used key : {Key}")
-        self.KeysFuctionsDict[Key] = Callback
+    def AddControlKey(self, Key, Callback, Mod = 0):
+        if not Key in self.KeysFunctionsDict:
+            self.KeysFunctionsDict[Key] = {}
+        if Mod in self.KeysFunctionsDict[Key]:
+            raise ValueError(f"Used key : {('Ctrl', 'Shift')[Mod]}+{Key}")
+        self.KeysFunctionsDict[Key][Mod] = Callback
 
     def LoadMenu(self):
         MainMenu = Tk.Menu(self.MainWindow)
         FMenu = Tk.Menu(MainMenu, tearoff=0)
-        FMenu.add_command(label="New", command=self.New)
-        FMenu.add_command(label="Open", command=self.Open)
-        FMenu.add_command(label="Save", command=self.Save)
+        FMenu.add_command(label="New", command=lambda:self.Open(Ask=False))
+        FMenu.add_command(label="Open", command=lambda:self.Open(Ask=True))
+        FMenu.add_command(label="Save", command=self.SaveBoardData)
+        FMenu.add_command(label="Save As", command=lambda:self.SaveBoardData(SelectFilename = True))
         FMenu.add_separator()
         FMenu.add_command(label="Exit", command=self.Close)
         MainMenu.add_cascade(label="File", menu=FMenu)
@@ -333,8 +366,6 @@ class GUI:
 
         self.MainWindow.config(menu=MainMenu)
 
-    def New(self):
-        raise NotImplementedError
     def Undo(self):
         raise NotImplementedError
     def Options(self):
@@ -350,7 +381,7 @@ class GUI:
         self.MainFrame.Console.AdvertiseChild(ConsoleInstance, "ConsoleInstance")
         ConsoleInstance.text.bind('<FocusIn>', lambda e:self.Modes.Console())
 
-    def LoadBoard(self):
+    def LoadCenterPanel(self):
         self.MainFrame.Board.AddFrame("Controls", Side = Tk.LEFT)
         self.MainFrame.Board.AddFrame("View")
         self.MainFrame.Board.AddFrame("DisplayToolbar", Side = Tk.LEFT)
@@ -449,7 +480,7 @@ class GUI:
                 self.CompToButtonMap[CompClass] = CompFrame.AddWidget(Tk.Button, f"{BookName}.{CompName}", row = row, column = column, text = CompName+Add, height = Params.GUI.Library.ComponentHeight, 
                                                                         command = lambda CompClass = CompClass: self.StartComponent(CompClass))
 
-    def SelectLibComponent(self, Button):
+    def ColorLibComponent(self, Button):
         if Button == self.CurrentCompButton:
             return
         if not self.CurrentCompButton is None:

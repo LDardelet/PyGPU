@@ -5,30 +5,34 @@ import types
 from importlib import reload
 from Values import Colors, Params, PinDict
 from Console import Log, LogSuccess, LogWarning, LogError
+from Storage import StorageItem
 
-class States:
-    Building = 0
-    Fixed = 1
-    Removing = 2
-    Selected = 3
-class StateHandler:
-    def __init__(self, Comp, StartValue = States.Building): # Starts building by default
+class StateHandler(StorageItem):
+    LibRef = 'StateHandler'
+    class States:
+        Building = 0
+        Fixed = 1
+        Removing = 2
+        Selected = 3
+    def __init__(self, Comp=None, StartValue = 0): # Starts building by default
+        StorageItem.__init__(self)
         self.Comp = Comp
         self.Value = StartValue
+        self._StoredAttributes.add('Value')
     @property
     def Building(self):
-        return self.Value == States.Building
+        return self.Value == self.States.Building
     @property
     def Fixed(self):
-        return self.Value == States.Fixed
+        return self.Value == self.States.Fixed
     def Fix(self):
-        self.Value = States.Fixed
+        self.Value = self.States.Fixed
         self.UpdateColor()
     @property
     def Selected(self):
-        return self.Value == States.Selected
+        return self.Value == self.States.Selected
     def Select(self):
-        self.Value = States.Selected
+        self.Value = self.States.Selected
         self.UpdateColor()
     def UpdateColor(self):
         Color = self.Color
@@ -47,7 +51,7 @@ class StateHandler:
     def NeutralColor(self):
         return Colors.Component.Modes[self.Value]
 
-class ComponentBase:
+class ComponentBase(StorageItem):
     Board = None
     DefaultLinewidth = 0
     DefaultMarkersize = 0
@@ -55,12 +59,19 @@ class ComponentBase:
     CName = None
     Book = None
     def __init__(self, Location=None, Rotation=None):
-        if not Location is None: # Happend for a child component, in which case both values are defined by the parents
+        StorageItem.__init__(self, None)
+        self._StoredAttributes.add('Location')
+        self._StoredAttributes.add('Rotation')
+        self._StoredAttributes.add('ID')
+        self._StoredAttributes.add('State')
+
+        if not Location is None: # Happend for a child component, in which case both values are defined by the parents, or in case of data loaded
             self.Location = np.array(Location)
             self.Rotation = Rotation
 
         self.State = StateHandler(self)
         self.ID = None
+
         self.Highlighted = False
         self.Plots = []
         self.HighlightPlots = []
@@ -427,21 +438,21 @@ class Wire(ComponentBase):
     DefaultLinewidth = Params.GUI.PlotsWidths.Wire
     DefaultMarkersize = 0
     CName = "Wire"
-    def __init__(self, Location, Rotation):
+    def __init__(self, Location=None, Rotation=None):
         ComponentBase.__init__(self, Location, Rotation)
 
-        self.Points = np.zeros((3,2), dtype = int)
-        self.plot(self.Points[:2,0], self.Points[:2,1], color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
-        self.plot(self.Points[1:,0], self.Points[1:,1], color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
-        self.Points[(0,2),:] = Location
-        self.UpdateLocation()
-
-        self.Connects = set()
+        self.Location = np.zeros((3,2), dtype = int)
+        self.plot(self.Location[:2,0], self.Location[:2,1], color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        self.plot(self.Location[1:,0], self.Location[1:,1], color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        
+        if not Location is None:
+            self.Location[(0,2),:] = Location
+            self.UpdateLocation()
 
     @property
     def AdvertisedLocations(self):
         AdvertisedLocations = []
-        P1, P2, P3 = self.Points
+        P1, P2, P3 = self.Location
         (A1, A2), (D1, D2) = self.Angles
         if (P2 != P1).any():
             AdvertisedLocations.append((P1[0], P1[1], A1+D1))
@@ -458,33 +469,33 @@ class Wire(ComponentBase):
         return np.array(AdvertisedLocations)
     @property
     def AdvertisedConnexions(self):
-        return self.Points[(0,2),:2]
+        return self.Location[(0,2),:2]
 
     def UpdateLocation(self):
         if self.BuildMode == 0: # Straight wires
             if (self.Rotation & 0b1) == 0:
-                self.Points[1,0] = self.Points[2,0]
-                self.Points[1,1] = self.Points[0,1]
+                self.Location[1,0] = self.Location[2,0]
+                self.Location[1,1] = self.Location[0,1]
             else:
-                self.Points[1,0] = self.Points[0,0]
-                self.Points[1,1] = self.Points[2,1]
+                self.Location[1,0] = self.Location[0,0]
+                self.Location[1,1] = self.Location[2,1]
         else:
-            Offsets = self.Points[2,:] - self.Points[0,:]
+            Offsets = self.Location[2,:] - self.Location[0,:]
             Lengths = abs(Offsets)
             StraightAxis = Lengths.argmax()
             SignStraight = np.sign(Offsets[StraightAxis])
             Offsets[1-StraightAxis] = 0
             Offsets[StraightAxis] -= SignStraight * Lengths.min()
             if (self.Rotation & 0b1) == 0:
-                self.Points[1,:] = self.Points[0,:] + Offsets
+                self.Location[1,:] = self.Location[0,:] + Offsets
             else:
-                self.Points[1,:] = self.Points[2,:] - Offsets
-        self.Plots[0].set_data(self.Points[:2,0], self.Points[:2,1])
-        self.Plots[1].set_data(self.Points[1:,0], self.Points[1:,1])
+                self.Location[1,:] = self.Location[2,:] - Offsets
+        self.Plots[0].set_data(self.Location[:2,0], self.Location[:2,1])
+        self.Plots[1].set_data(self.Location[1:,0], self.Location[1:,1])
 
     @property
     def Angles(self):
-        Offsets = self.Points[1:,:] - self.Points[:2,:]
+        Offsets = self.Location[1:,:] - self.Location[:2,:]
         As = np.zeros(2, dtype = int)
         Ds = np.zeros(2, dtype = int)
         for i in range(2):
@@ -502,18 +513,19 @@ class Wire(ComponentBase):
         return As, Ds
 
     def Drag(self, Cursor):
-        self.Points[2,:] = Cursor
+        self.Location[2,:] = Cursor
         self.UpdateLocation()
 
     @property
     def CanFix(self):
-        return (self.Points[0,:] != self.Points[2,:]).any()
+        return (self.Location[0,:] != self.Location[2,:]).any()
 
     def __repr__(self):
         return self.CName
 
 class Connexion(ComponentBase):
     CName = "Connexion"
+    LibRef = "Connexion"
     DefaultLinewidth = 0
     DefaultMarkersize = Params.GUI.PlotsWidths.Connexion
     def __init__(self, Location, Column): # Warning : 0 is stored in sets, to avoid many checks.

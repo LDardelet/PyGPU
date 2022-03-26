@@ -1,4 +1,5 @@
 import numpy as np
+import os
 
 class C:
     grey = 'grey'
@@ -40,6 +41,9 @@ class Params:
         ComponentMinHeight = 3
         CasingsOwnPinsBases = False
     class GUI:
+        Name = 'Logic Gates Simulator'
+        DataFolder = '~/Documents/PyGPUFiles/'
+        BoardSaveSubfolder = 'Projects/'
         ModesNames = {0:"Default",
                       1: "Console",
                       2: "Build",
@@ -96,6 +100,8 @@ class Params:
             Select = 's'
             Set = 'space'
             Switch = 't'
+            # Modifiers
+
         class Console:
             Height = 7
             Width = 120
@@ -114,4 +120,7 @@ LevelsNames = {
     None:'?',
     0:'LOW',
     1:'HIGH'}
+
+Params.Board.Size = Params.Board.Size - (Params.Board.Size & 1)
 Params.Board.Max = Params.Board.Size // 2
+Params.GUI.DataAbsPath = os.path.realpath(os.path.expanduser(Params.GUI.DataFolder))

@@ -4,18 +4,24 @@ import Components
 from Values import Colors, Params, LevelsNames
 from Console import Log, LogSuccess, LogWarning, LogError
 import DefaultLibrary
+from Storage import StorageItem
 
-class ComponentsHandler:
-    def __init__(self, LoadedData = None):
-        self.MaxValue = 0
-        self.Components = {}
+class ComponentsHandler(StorageItem):
+    LibRef = "ComponentsHandler"
+    def __init__(self):
+        # Dynamic Data
         self.Casings = {}
-        self.ComponentsLimits = np.array([[0,0], [0.,0]])
+        self.LiveUpdate = True
         self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 9), dtype = int)
 
+        StorageItem.__init__(self)
+        # Saved Data
+        self.MaxID = 0
+        self.Components = {}
         self.Groups = {} # Groups share wire transmissions
-
-        self.LiveUpdate = True
+        self._StoredAttributes.add('MaxID')
+        self._StoredAttributes.add('Components')
+        self._StoredAttributes.add('Groups')
 
     def NewGroup(self, Comp):
         Group = GroupC(Comp)
@@ -73,11 +79,17 @@ class ComponentsHandler:
         return (Values == 0).all() # TODO : Ask for wire bridges
             #LogWarning(f"Unable to register the new component, due to positions {NewLocations[np.where(Values != 0), :].tolist()}")
 
-    def SetComponent(self, Component): # Sets the ID of a component and stores it. Does not handle links.
-        self.MaxValue += 1
-        Component.ID = self.MaxValue
+    def SetComponent(self, Component, ID = None): # Sets the ID of a component and stores it. Does not handle links. ID can be specified to load saved data
+        if ID is None:
+            self.MaxID += 1
+            Component.ID = self.MaxID
+        else:
+            if ID in self.Components:
+                raise ValueError
+            Component.ID = ID
+
         self.Components[Component.ID] = Component
-        Component.Group = self.NewGroup(Component)
+        #Component.Group = self.NewGroup(Component) # Odd line, must probably be deleted
         for x, y, theta in Component.AdvertisedLocations:
             self.Map[x,y,theta] = Component.ID
         if isinstance(Component, Components.CasedComponent):
@@ -183,13 +195,36 @@ class ComponentsHandler:
     def HasItem(self, Location):
         return self.Map[Location[0], Location[1], :8].any()
 
-class GroupC:
-    def __init__(self, BaseComponent): # To avoid creating useless new IDs, a group ID is define by the ID of its first component. May lead to issues later on, but unlikely.
-        self.ID = BaseComponent.ID
-        BaseComponent.Group = self
-        self.Components = {BaseComponent}
+    @property
+    def ComponentsLimits(self):
+        PresenceMap = self.Map.any(axis = 2)
+        Limits = np.zeros((2,2), dtype = int)
+        xPresMap = PresenceMap.any(axis = 1)
+        Limits[0,:] = xPresMap.argmin(), xPresMap.argmax()
+        yPresMap = PresenceMap.any(axis = 0)
+        Limits[1,:] = yPresMap.argmin(), yPresMap.argmax()
+        Limits[np.where(Limits > Params.Board.Max)] -= Params.Board.Size
+        return Limits
 
-        self.HighlightPlots = list(BaseComponent.HighlightPlots)
+class GroupC(StorageItem):
+    LibRef = "Group"
+    def __init__(self, BaseComponent = None): # To avoid creating useless new IDs, a group ID is define by the ID of its first component. May lead to issues later on, but unlikely.
+        if not BaseComponent is None:
+            BaseComponent.Group = self
+            self.Components = {BaseComponent}
+            self.ID = BaseComponent.ID
+            self.HighlightPlots = list(BaseComponent.HighlightPlots)
+        else:
+            self.Components = {}
+            self.ID = None
+            self.HighlightPlots = []
+
+        StorageItem.__init__(self)
+        self._StoredAttributes.add('ID')
+        self._StoredAttributes.add('Components')
+        self._StoredAttributes.add('Value')
+        self._StoredAttributes.add('SetBy')
+
 
         self.Value = None
         self.SetBy = None
@@ -261,8 +296,8 @@ CasingGroup = CasingGroupC()
 # (InputPins, OutputPins, Callback, Schematics, ForceWidth, ForceHeight, DisplayPinNumbering, Symbol)
 
 class BookC:
-    def __init__(self, BookName, BookComponents = {}):
-        self.Name = BookName
+    def __init__(self, Name, BookComponents = {}):
+        self.Name = Name
         self.Components = []
         for CompName, CompData in BookComponents.items():
             if CompName in self.__dict__:
@@ -303,11 +338,19 @@ class BookC:
                                        'Symbol':Symbol,
                                    })
 class CLibrary:
-    ComponentBase = Components.ComponentBase
+    ComponentBase = Components.ComponentBase # Used to transmit Ax reference
     def __init__(self):
+        StorageItem.Library = self
+
         self.Books = []
+        self.Special = {}
         self.AddBook(BookC('Standard', DefaultLibrary.Definitions))
         self.Wire = Components.Wire
+
+        self.AddSpecialStorageClass(Components.StateHandler)
+        self.AddSpecialStorageClass(Components.Connexion)
+        self.AddSpecialStorageClass(GroupC)
+        self.AddSpecialStorageClass(ComponentsHandler)
 
     def AddBook(self, Book):
         self.__dict__[Book.Name] = Book
@@ -315,3 +358,14 @@ class CLibrary:
 
     def IsWire(self, C): # Checks if class or class instance
         return C == Components.Wire or isinstance(C, Components.Wire)
+
+    def AddSpecialStorageClass(self, Class):
+        if '.' in Class.LibRef:
+            LogWarning("Special storage class contains forbidden character '.'")
+        self.Special[Class.LibRef] = Class
+    def __getitem__(self, LibRef):
+        if '.' in LibRef:
+            BName, CName = LibRef.split('.')
+            return getattr(getattr(self, BName), CName)
+        else:
+            return self.Special[LibRef]
