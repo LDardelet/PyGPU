@@ -1,7 +1,7 @@
 import numpy as np
 
 import Components
-from Values import Colors, Params, LevelsNames
+from Values import Colors, Params, Levels
 from Console import Log, LogSuccess, LogWarning, LogError
 import DefaultLibrary
 from Storage import StorageItem
@@ -9,25 +9,36 @@ from Storage import StorageItem
 class ComponentsHandler(StorageItem):
     LibRef = "ComponentsHandler"
     def __init__(self):
-        # Dynamic Data
-        self.Casings = {}
+        self.StoreAttribute('MaxID', 0)
+        self.StoreAttribute('Components', {})
+        self.StoreAttribute('Groups', {})
+        self.StoreAttribute('Casings', {})
+        self.Start()
+
+    def Start(self):
         self.LiveUpdate = True
         self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 9), dtype = int)
-
-        StorageItem.__init__(self)
-        # Saved Data
-        self.MaxID = 0
-        self.Components = {}
-        self.Groups = {} # Groups share wire transmissions
-        self._StoredAttributes.add('MaxID')
-        self._StoredAttributes.add('Components')
-        self._StoredAttributes.add('Groups')
+        for Component in self.Components.values():
+            self.RegisterMap(Component)
 
     def NewGroup(self, Comp):
-        Group = GroupC(Comp)
+        Group = GroupC(Comp, Comp.ID)
         self.Groups[Group.ID] = Group
         return Group
 
+    def Trigger(func):
+        def Register(self, *args, **kwargs):
+            self.AffectedGroups = {}
+            output = func(self, *args, **kwargs)
+            if self.LiveUpdate:
+                self.ComputeChain()
+            return output
+        return Register
+
+    def ComputeChain(self):
+        Log("Updating chain")
+
+    @Trigger
     def Register(self, NewComponent):
         if not NewComponent.CanFix:
             return False
@@ -51,7 +62,6 @@ class ComponentsHandler(StorageItem):
 
         if self.LiveUpdate:
             NewComponent() 
-
         return True
 
     def LinkToGrid(self, NewComponent):
@@ -75,31 +85,28 @@ class ComponentsHandler(StorageItem):
 
     def CheckRoom(self, NewComponent):
         NewLocations = NewComponent.AdvertisedLocations
-        Values = self.Map[NewLocations[:,0], NewLocations[:,1], NewLocations[:,2]]
-        return (Values == 0).all() # TODO : Ask for wire bridges
-            #LogWarning(f"Unable to register the new component, due to positions {NewLocations[np.where(Values != 0), :].tolist()}")
+        IDs = self.Map[NewLocations[:,0], NewLocations[:,1], NewLocations[:,2]]
+        return (IDs == 0).all() # TODO : Ask for wire bridges
+            #LogWarning(f"Unable to register the new component, due to positions {NewLocations[np.where(IDs != 0), :].tolist()}")
 
-    def SetComponent(self, Component, ID = None): # Sets the ID of a component and stores it. Does not handle links. ID can be specified to load saved data
-        if ID is None:
-            self.MaxID += 1
-            Component.ID = self.MaxID
-        else:
-            if ID in self.Components:
-                raise ValueError
-            Component.ID = ID
+    def SetComponent(self, Component): # Sets the ID of a component and stores it. Does not handle links.
+        self.MaxID += 1
+        Component.ID = self.MaxID
 
         self.Components[Component.ID] = Component
-        #Component.Group = self.NewGroup(Component) # Odd line, must probably be deleted
-        for x, y, theta in Component.AdvertisedLocations:
-            self.Map[x,y,theta] = Component.ID
+        self.RegisterMap(Component)
         if isinstance(Component, Components.CasedComponent):
             self.Casings[Component.ID] = Component
-            if Params.Board.CasingsOwnPinsBases:
+            if Params.Board.CasingsOwnPinsBases: # Should not affect behaviour, purely internal handling
                 Component.Group = self.NewGroup(Component)
             else:
                 Component.Group = CasingGroup
         else:
             Component.Group = self.NewGroup(Component)
+
+    def RegisterMap(self, Component):
+        for x, y, theta in Component.AdvertisedLocations:
+            self.Map[x,y,theta] = Component.ID
 
     def DestroyComponent(self, ID): # Completely removes the component by its ID. Does not handle links.
         Component = self.Components.pop(ID)
@@ -121,8 +128,6 @@ class ComponentsHandler(StorageItem):
         self.SetComponent(NewConnexion)
         for ID in Column[:-1]:
             if ID:
-                if NewConnexion.Group is None:
-                    self.Components[ID].Group.AddComponent(NewConnexion)
                 self.AddLink(ID, NewConnexion.ID)
     def RemoveConnexion(self, Location):
         Column = self.Map[Location[0], Location[1],:]
@@ -181,7 +186,7 @@ class ComponentsHandler(StorageItem):
         if not Groups:
             return ""
 
-        #return ', '.join([f'Group {Group.ID} : '+ ', '.join([str(Component) for Component in Components])+f' ({LevelsNames[Group.Value]})' for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
+        #return ', '.join([f'Group {Group.ID} : '+ ', '.join([str(Component) for Component in Components])+f' ({Levels.Names[Group.Level]})' for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
         return ', '.join([f'{Group}' + ': '*bool(Group.__repr__())+ ', '.join([str(Component) for Component in Components]) for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
 
     def CasingsInfo(self, Location):
@@ -208,26 +213,17 @@ class ComponentsHandler(StorageItem):
 
 class GroupC(StorageItem):
     LibRef = "Group"
-    def __init__(self, BaseComponent = None): # To avoid creating useless new IDs, a group ID is define by the ID of its first component. May lead to issues later on, but unlikely.
-        if not BaseComponent is None:
-            BaseComponent.Group = self
-            self.Components = {BaseComponent}
-            self.ID = BaseComponent.ID
-            self.HighlightPlots = list(BaseComponent.HighlightPlots)
-        else:
-            self.Components = {}
-            self.ID = None
-            self.HighlightPlots = []
+    def __init__(self, Component, ID): # To avoid creating useless new IDs, a group ID is define by the ID of its first component. May lead to issues later on, but unlikely.
+        self.StoreAttribute('ID', ID)
+        self.StoreAttribute('Components', {Component})
+        self.StoreAttribute('Level', Params.Board.GroupDefaultLevel)
+        self.StoreAttribute('SetBy', None)
+        self.Start()
 
-        StorageItem.__init__(self)
-        self._StoredAttributes.add('ID')
-        self._StoredAttributes.add('Components')
-        self._StoredAttributes.add('Value')
-        self._StoredAttributes.add('SetBy')
-
-
-        self.Value = None
-        self.SetBy = None
+    def Start(self):
+        self.HighlightPlots = []
+        for Component in self.Components:
+            self.HighlightPlots += Component.HighlightPlots
 
     def Merge(self, Group): 
         self.HighlightPlots += Group.HighlightPlots
@@ -237,12 +233,12 @@ class GroupC(StorageItem):
 
         if self.IsSet:
             if Group.IsSet:
-                self.DualSetWarning(Group.SetBy)
+                self.DualSetWarning(Group.SetBy, 'Merge')
             else:
-                self.SetValue(self.Value, self.SetBy)
+                self.SetLevel(self.Level, self.SetBy)
         else:
             if Group.IsSet:
-                self.SetValue(Group.Value, Group.SetBy)
+                self.SetLevel(Group.Level, Group.SetBy)
         return Group.ID
 
     def AddComponent(self, Component):
@@ -250,24 +246,21 @@ class GroupC(StorageItem):
         self.Components.add(Component)
         self.HighlightPlots += Component.HighlightPlots
 
-    def SetValue(self, Value, Component):
+    def SetLevel(self, Level, Component):
         if not self.SetBy is None and Component != self.SetBy:
-            self.DualSetWarning(Component)
+            self.DualSetWarning(Component, 'SetLevel')
             return
         self.SetBy = Component
-        self.Value = Value
-        self.UpdateGroupColor()
+        self.Level = Level
+        for Component in self.Components:
+            Component.UpdateLevel()
 
-    def DualSetWarning(self, Component):
-        LogWarning(f"Group {self.ID} set by {Component} and {self.SetBy}")
+    def DualSetWarning(self, Component, funcStr = ''):
+        LogWarning(f"Group {self.ID} set by {Component} and {self.SetBy}" + bool(funcStr)*f" ({funcStr})")
 
     @property
     def IsSet(self):
-        return not self.Value is None
-
-    def UpdateGroupColor(self): # May be more efficient to update plots directly. However, it forbids hot board modifications
-        for Component in self.Components:
-            Component.Update()
+        return not self.SetBy is None
 
     def Highlight(self, var):
         for Component in self.Components:
@@ -281,13 +274,18 @@ class GroupC(StorageItem):
         for Component in self.Components:
             Component.Clear()
 
+    @property
+    def Color(self):
+        return Colors.Component.Levels[self.Level]
     def __repr__(self):
-        return f"Group {self.ID} ({LevelsNames[self.Value]})"
+        return f"Group {self.ID} ({Levels.Names[self.Level]})"
     def __len__(self):
         return len(self.Components)
 
-class CasingGroupC:
-    Value = None
+class CasingGroupC(StorageItem):
+    Level = Levels.Undef
+    Color = Colors.Component.Levels[Level]
+    LibRef = "CGC"
     def __repr__(self):
         return ""
 CasingGroup = CasingGroupC()
@@ -312,9 +310,9 @@ class BookC:
     def __repr__(self):
         return self.Name
 
-    def AddComponentClass(self, CompName, Values):
+    def AddComponentClass(self, CompName, CompData):
         try:
-            InputPinsDef, OutputPinsDef, Callback, Schematics, ForceWidth, ForceHeight, DisplayPinNumbering, Symbol = Values
+            InputPinsDef, OutputPinsDef, Callback, Schematics, ForceWidth, ForceHeight, DisplayPinNumbering, Symbol = CompData
             PinIDs = set()
             for PinLocation, PinName in InputPinsDef + OutputPinsDef:
                 if PinLocation in PinIDs:
@@ -349,7 +347,9 @@ class CLibrary:
 
         self.AddSpecialStorageClass(Components.StateHandler)
         self.AddSpecialStorageClass(Components.Connexion)
+        self.AddSpecialStorageClass(Components.ComponentPin)
         self.AddSpecialStorageClass(GroupC)
+        self.AddSpecialStorageClass(CasingGroupC)
         self.AddSpecialStorageClass(ComponentsHandler)
 
     def AddBook(self, Book):
@@ -362,6 +362,8 @@ class CLibrary:
     def AddSpecialStorageClass(self, Class):
         if '.' in Class.LibRef:
             LogWarning("Special storage class contains forbidden character '.'")
+        if Class.LibRef == None:
+            LogWarning(f"None LibRef for {Class}")
         self.Special[Class.LibRef] = Class
     def __getitem__(self, LibRef):
         if '.' in LibRef:

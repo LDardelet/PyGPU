@@ -8,7 +8,18 @@ class C:
     white = 'white'
     green = 'green'
     red = 'red'
+    blue = 'blue'
     orange = 'orange'
+
+class Levels:
+    Undef = None
+    Low   = 0
+    High  = 1
+    Names = {
+        Undef:'?',
+        Low  :'LOW',
+        High :'HIGH'
+    }
 
 class Colors:
     class GUI:
@@ -24,13 +35,14 @@ class Colors:
     class Component:
         Modes = {
             0: C.yellow,    # Building
-            1: C.white,     # Fixed, undefined
+            1: C.white,     # Fixed, undefined.
             2: C.red,       # Being removed
             3: C.yellow,       # Selected
         }
-        Values = {
-            0: C.orange,
-            1: C.green,
+        Levels = {
+            Levels.Undef : C.white,
+            Levels.Low   : C.orange,
+            Levels.High  : C.green,
         }
 
 class Params:
@@ -40,6 +52,7 @@ class Params:
         ComponentMinWidth = 3
         ComponentMinHeight = 3
         CasingsOwnPinsBases = False
+        GroupDefaultLevel = Levels.Low
     class GUI:
         Name = 'Logic Gates Simulator'
         DataFolder = '~/Documents/PyGPUFiles/'
@@ -116,11 +129,6 @@ class PinDict:
     Output = 1
     PinTypeNames = {0:'Input',
                     1:'Output'}
-LevelsNames = {
-    None:'?',
-    0:'LOW',
-    1:'HIGH'}
-
 Params.Board.Size = Params.Board.Size - (Params.Board.Size & 1)
 Params.Board.Max = Params.Board.Size // 2
 Params.GUI.DataAbsPath = os.path.realpath(os.path.expanduser(Params.GUI.DataFolder))

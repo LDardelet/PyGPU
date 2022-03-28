@@ -78,7 +78,7 @@ class GUI:
 
     def SaveBoardData(self, SelectFilename = False):
         if self.FH.Filename is None or SelectFilename:
-            Filename = Tk.filedialog.asksaveasfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('Fichier JSON', '.json')], defaultextension = '.json')
+            Filename = Tk.filedialog.asksaveasfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')
             if not Filename is None:
                 self.FH.Filename = Filename
                 self.SetTitle()
@@ -86,7 +86,7 @@ class GUI:
 
     def Open(self, Ask):
         if Ask:
-            Filename = Tk.filedialog.askopenfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('Fichier JSON', '.json')], defaultextension = '.json')
+            Filename = Tk.filedialog.askopenfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')
             if not Filename is None:
                 self.LoadBoardData(Filename)
         else:
@@ -205,7 +205,7 @@ class GUI:
         self.WireButtons[1-mode].configure(background = Colors.GUI.Widget.default)
         self.Library.Wire.BuildMode = mode
         if self.Modes.Build and self.Library.IsWire(self.TmpComponents[0]):
-            self.TmpComponents[0].UpdateLocation()
+            self.TmpComponents[0].SetBuildMode(mode)
             self.Draw()
 
     def Set(self):
