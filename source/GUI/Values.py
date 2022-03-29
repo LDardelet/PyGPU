@@ -53,6 +53,7 @@ class Params:
         ComponentMinHeight = 3
         CasingsOwnPinsBases = False
         GroupDefaultLevel = Levels.Low
+        AllowStableRecursiveLoops = True
     class GUI:
         Name = 'Logic Gates Simulator'
         DataFolder = '~/Documents/PyGPUFiles/'

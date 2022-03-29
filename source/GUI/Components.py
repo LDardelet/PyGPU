@@ -5,9 +5,9 @@ import types
 from importlib import reload
 from Values import Colors, Params, PinDict, Levels
 from Console import Log, LogSuccess, LogWarning, LogError
-from Storage import StorageItem
+from Storage import StorageItem, static
 
-class StateHandler(StorageItem):
+class StateHandlerC(StorageItem):
     LibRef = 'StateHandler'
     class States:
         Building = 0
@@ -15,8 +15,8 @@ class StateHandler(StorageItem):
         Removing = 2
         Selected = 3
     def __init__(self, Comp, StartState = 0): # Starts building by default
-        self.StoreAttribute('Comp', Comp)
-        self.StoreAttribute('State', StartState)
+        self.StoredAttribute('Comp', Comp)
+        self.StoredAttribute('State', StartState)
     @property
     def Building(self):
         return self.State == self.States.Building
@@ -42,9 +42,10 @@ class StateHandler(StorageItem):
     @property
     def Color(self):
         if not self.Fixed or self.Comp.Group is None:
-            return Colors.Component.Modes[self.State]
+            Color = Colors.Component.Modes[self.State]
         else:
-            return self.Comp.Group.Color
+            Color = self.Comp.Group.Color
+        return Color
     @property
     def NeutralColor(self):
         return Colors.Component.Modes[self.State]
@@ -57,13 +58,13 @@ class ComponentBase(StorageItem):
     CName = None
     Book = None
     def __init__(self, Location=None, Rotation=None): # As base for components, only one we cannot remove default arguments
-        self.StoreAttribute('Location', Location)
-        self.StoreAttribute('Rotation', Rotation)
-        self.StoreAttribute('ID', None)
-        self.StoreAttribute('State', StateHandler(self))
-        self.StoreAttribute('Group', None)
-        self.StoreAttribute('Children', set())
-        self.StoreAttribute('Links', set())
+        self.StoredAttribute('Location', Location)
+        self.StoredAttribute('Rotation', Rotation)
+        self.StoredAttribute('ID', None)
+        self.StoredAttribute('State', StateHandlerC(self))
+        self.StoredAttribute('Group', None)
+        self.StoredAttribute('Children', set())
+        self.StoredAttribute('Links', set())
 
     def Start(self):
         self.Highlighted = False
@@ -144,7 +145,9 @@ class ComponentBase(StorageItem):
         self.State.UpdateColor()
     def __call__(self):
         pass
-
+    @property
+    def Level(self):
+        return self.Group.Level
     @property
     def Location(self):
         return self._Location
@@ -175,6 +178,9 @@ class ComponentBase(StorageItem):
     @property
     def Extent(self):
         return (self.AdvertisedLocations[:,0].min(), self.AdvertisedLocations[:,1].min(), self.AdvertisedLocations[:,0].max(), self.AdvertisedLocations[:,1].max())
+    @property
+    def TriggersParent(self):
+        return False
 
     def Clear(self): # Falls back from temporary state to fixed state, or removed
         if self.State.Building:
@@ -192,7 +198,7 @@ class ComponentBase(StorageItem):
     def LibRef(self):
         return f"{self.Book}.{self.CName}"
 
-class CasedComponent(ComponentBase): # Template to create any type of component
+class CasedComponentC(ComponentBase): # Template to create any type of component
     DefaultLinewidth = Params.GUI.PlotsWidths.Casing
     InputPinsDef = None
     OutputPinsDef = None
@@ -204,36 +210,24 @@ class CasedComponent(ComponentBase): # Template to create any type of component
     Symbol = ''
     def __init__(self, Location, Rotation):
         super().__init__(Location, Rotation)
-        self.StoreAttribute('InputPins', [])
-        self.StoreAttribute('OutputPins', [])
+        self.StoredAttribute('InputPins', [])
+        self.StoredAttribute('OutputPins', [])
 
         self.Start()
 
-        def PinKey(Side, Index):
-            return f"{Side}.{Offset}"
         for nPin, ((Side, Index), Name) in enumerate(self.InputPinsDef + self.OutputPinsDef):
             if nPin < len(self.InputPinsDef):
                 PinsList = self.InputPins
-                Type = PinDict.Input
+                PinClass = InputPinC
             else:
                 PinsList = self.OutputPins
-                Type = PinDict.Output
+                PinClass = OutputPinC
             if self.DisplayPinNumbering:
                 if not Name:
                     Name = str(nPin)
                 else:
                     Name = f"{nPin} ({Name})"
-            if Side == PinDict.W:
-                Offset = self.LocToSWOffset + np.array([0, self.Height-Index-1])
-            elif Side == PinDict.E:
-                Offset = self.LocToSWOffset + np.array([self.Width, self.Height-Index-1])
-            elif Side == PinDict.N:
-                Offset = self.LocToSWOffset + np.array([1+Index, self.Height])
-            elif Side == PinDict.S:
-                Offset = self.LocToSWOffset + np.array([1+nPin, 0])
-            else:
-                raise ValueError(f"Wrong component {self.__class__.__name__} definition")
-            Pin = ComponentPin(self, Offset, Side, Type, Index, Name)
+            Pin = PinClass(self, Side, Index, Name)
             self.Children.add(Pin)
             PinsList.append(Pin)
 
@@ -276,14 +270,21 @@ class CasedComponent(ComponentBase): # Template to create any type of component
         if not self.InputReady:
             return
         for Pin, Level in zip(self.OutputPins, self.Run(*self.Input)):
-            Pin.Group.SetLevel(Level, Pin)
+            Pin.Level = Level
 
     @property
     def Input(self):
-        return [Pin.Group.Level for Pin in self.InputPins]
+        return [Pin.Level for Pin in self.InputPins]
     @property
     def Output(self):
-        return [Pin.Group.Level for Pin in self.OutputPins]
+        return [Pin.Level for Pin in self.OutputPins]
+    @property
+    def Level(self): # We define a cased component level as the binary representation of its output
+        Level = 0
+        for nPin, Pin in enumerate(self.OutputPins):
+            Level |= Pin.Level << nPin
+        return Level
+
     @property
     def InputReady(self):
         return (not None in self.Input)
@@ -358,31 +359,49 @@ class CasedComponent(ComponentBase): # Template to create any type of component
         else:
             return np.zeros((0,3), dtype = int)
 
-class ComponentPin(ComponentBase):
+class ComponentPinC(ComponentBase):
     DefaultLinewidth = Params.GUI.PlotsWidths.Wire
     DefaultMarkersize = 0
     CName = "Pin"
     LibRef = "Pin"
-    def __init__(self, Parent, PinBaseOffset, Side, Type, Index, Name = ''):
+    def __init__(self, Parent, Side, Index, Name = ''):
         super().__init__()
-        self.StoreAttribute('Parent', Parent)
-        self.StoreAttribute('PinBaseOffset', PinBaseOffset)
-        self.StoreAttribute('Side', Side)
-        self.StoreAttribute('Type', Type)
-        self.StoreAttribute('Index', Index)
-        self.StoreAttribute('Name', Name)
+        self.StoredAttribute('Parent', Parent)
+        self.StoredAttribute('Side', Side)
+        self.StoredAttribute('Index', Index)
+        self.StoredAttribute('Name', Name)
 
         self.Start()
 
-    def Start(self):
-        self.BaseRotation = {PinDict.E:0,
-                             PinDict.N:1,
-                             PinDict.W:2,
-                             PinDict.S:3}[self.Side]
-        self.Vector = Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation)
-        self.Offset = self.PinBaseOffset + self.Vector
-
-        super().Start()
+    @property
+    @static
+    def PinBaseOffset(self):
+        if self.Side == PinDict.W:
+            return self.Parent.LocToSWOffset + np.array([0, self.Parent.Height-self.Index-1])
+        elif self.Side == PinDict.E:
+            return self.Parent.LocToSWOffset + np.array([self.Parent.Width, self.Parent.Height-self.Index-1])
+        elif self.Side == PinDict.N:
+            return self.Parent.LocToSWOffset + np.array([1+self.Index, self.Parent.Height])
+        elif self.Side == PinDict.S:
+            return self.Parent.LocToSWOffset + np.array([1+self.Index, 0])
+        else:
+            raise ValueError(f"Wrong component {self.Parent.CName} definition for pin {self.Index}")
+    @property
+    @static
+    def BaseRotation(self):
+        return {PinDict.E:0,
+                PinDict.N:1,
+                PinDict.W:2,
+                PinDict.S:3}[self.Side]
+    @property
+    @static
+    def Offset(self):
+        print(self.BaseRotation)
+        return self.PinBaseOffset + Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation)
+    @property
+    @static
+    def TextBaseOffset(self):
+        return self.PinBaseOffset - Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation)
 
     def PlotInit(self):
         Loc = self.Location
@@ -418,12 +437,7 @@ class ComponentPin(ComponentBase):
         return self.Parent.Location + RotateOffset(self.PinBaseOffset, self.Rotation)
     @property
     def TextLocation(self):
-        return self.Parent.Location + RotateOffset(self.PinBaseOffset - self.Vector, self.Rotation)
-
-    def UpdateLevel(self):
-        super().UpdateLevel()
-        if self.Type == PinDict.Input:
-            self.Parent()
+        return self.Parent.Location + RotateOffset(self.TextBaseOffset, self.Rotation)
     @property
     def AdvertisedLocations(self):
         if Params.Board.CasingsOwnPinsBases:
@@ -439,7 +453,24 @@ class ComponentPin(ComponentBase):
         return self.Location.reshape((1,2))
 
     def __repr__(self):
-        return f"{self.Parent} {PinDict.PinTypeNames[self.Type]} {self.Name}"
+        return f"{self.Parent} {self.CName} {self.Name}"
+
+class InputPinC(ComponentPinC):
+    CName = "Input Pin"
+    LibRef = "IPin"
+    @property
+    def TriggersParent(self):
+        return True
+
+class OutputPinC(ComponentPinC):
+    CName = "Output Pin"
+    LibRef = "OPin"
+    @property
+    def Level(self):
+        return self.Group.Level
+    @Level.setter
+    def Level(self, Level):
+        self.Group.SetLevel(Level, self)
 
 def PinNameDict(Rotation):
     SideIndex = Rotation & 0b11
@@ -458,13 +489,13 @@ def RotateOffset(Offset, Rotation): # Use LRU ?
     if RotValue == 3:
         return np.array([Offset[1], -Offset[0]])
 
-class Wire(ComponentBase):
+class WireC(ComponentBase):
     DefaultLinewidth = Params.GUI.PlotsWidths.Wire
     DefaultMarkersize = 0
     CName = "Wire"
     def __init__(self, Location, Rotation):
         super().__init__(Location, Rotation)
-        self.StoreAttribute('BuildMode', self.__class__.BuildMode)
+        self.StoredAttribute('BuildMode', self.__class__.BuildMode)
 
         self.Start()
 
@@ -482,9 +513,12 @@ class Wire(ComponentBase):
         return self._Location
     @Location.setter
     def Location(self, Location):
-        self._Location = np.zeros((3,2), dtype = int)
-        if not Location is None:
-            self._Location[(0,2),:] = np.array(Location)
+        if len(Location) == 3:
+            self._Location = np.array(Location)
+        else:
+            self._Location = np.zeros((3,2), dtype = int)
+            if not Location is None:
+                self._Location[(0,2),:] = np.array(Location)
     @property
     def AdvertisedLocations(self):
         AdvertisedLocations = []
@@ -506,6 +540,7 @@ class Wire(ComponentBase):
     @property
     def AdvertisedConnexions(self):
         return self.Location[(0,2),:2]
+        #return self.Location
 
     def UpdateLocation(self):
         if self.BuildMode == 0: # Straight wires
@@ -556,19 +591,14 @@ class Wire(ComponentBase):
     def CanFix(self):
         return (self.Location[0,:] != self.Location[2,:]).any()
 
-    def __repr__(self):
-        return f"{self.CName} ({self.ID})"
-
-class Connexion(ComponentBase):
+class ConnexionC(ComponentBase):
     CName = "Connexion"
     LibRef = "Connexion"
     DefaultLinewidth = 0
     DefaultMarkersize = Params.GUI.PlotsWidths.Connexion
     def __init__(self, Location, Column): # Warning : 0 is stored in sets, to avoid many checks.
         super().__init__(Location)
-        IDs, NWires = self.GetConnexionInfo(Column)
-        self.StoreAttribute('IDs', IDs)
-        self.StoreAttribute('NWires', NWires)
+        self.StoredAttribute('Column', np.array(Column))
 
         self.Start()
         self.State.Fix()
@@ -578,12 +608,17 @@ class Connexion(ComponentBase):
         self.CheckDisplay()
 
     def UpdateConnexions(self, Column):
-        self.IDs, self.NWires = self.GetConnexionInfo(Column)
+        self.Column = np.array(Column)
         self.CheckDisplay()
 
-    @staticmethod
-    def GetConnexionInfo(Column):
-        return set(Column[:8]), (Column[:8] > 0).sum()
+    @property
+    def IDs(self):
+        IDs = set(self.Column[:8])
+        IDs.discard(0)
+        return IDs
+    @property
+    def NWires(self):
+        return (self.Column[:8] > 0).sum()
 
     def CheckDisplay(self):
         if self.NWires >= 3:

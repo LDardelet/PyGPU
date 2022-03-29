@@ -5,7 +5,7 @@ import re
 
 from Console import Log, LogSuccess, LogWarning
 
-class FileHandler:
+class FileHandlerC:
     def __init__(self):
         self.Filename = None
         self.LoadedData = None
@@ -43,8 +43,6 @@ class Meta(type):
         self = cls.__new__(cls, *args, **kwargs)
         if 'UnpackData' in kwargs:
             self.Unpack(*kwargs['UnpackData'])
-            print("Pre-start:", self)
-            self.Start()
         else:
             StorageItem.__init__(self, *args, **kwargs)
         return self
@@ -52,16 +50,26 @@ class Meta(type):
 class StorageItem(metaclass = Meta):
     Library = None
     LibRef = None
+    _StoreTmpAttributes = False
     def __init__(self, *args, **kwargs):
         # If we reach this point, it means that no loaded data was found in kwargs. We start by initializing the element as a StorageItem, and fall back to the regular behaviour
         if hasattr(self, '_SA'): # Stops any infinite loop for all non-overloaded __init__ inherited classes
             return
-        self._SA = {'_SA', 'LibRef'}
+        self._SA = {'_SA', 'LibRef', '_StoreTmpAttributes'}
+        if self._StoreTmpAttributes:
+            self.StoredAttribute('_TA', {})
         self.__init__(*args, **kwargs) # Start method if left to be called when necessary in the __init__
-    def StoreAttribute(self, attr, defaultValue):
+    def StoredAttribute(self, attr, defaultValue):
         self._SA.add(attr)
         if hasattr(self, attr) and not hasattr(self.__class__, attr):
-            print(f"Weird : attribute {attr} already set")
+            print(f"Weird : attribute {attr} already set while loading")
+        setattr(self, attr, defaultValue)
+    def TmpAttribute(self, attr, defaultValue):
+        if not self._StoreTmpAttributes:
+            raise Exception("Storing of temporary attributes is disabled")
+        self._TA[attr] = type(defaultValue)(defaultValue) # Dereferenciation to ensure default value is saved
+        if hasattr(self, attr):
+            print(f"Weird : temporary attribute {attr} already set")
         setattr(self, attr, defaultValue)
 
     def Start(self):
@@ -78,8 +86,12 @@ class StorageItem(metaclass = Meta):
         if NewItem:
             D = {}
             for Key in self._SA:
-                print(f"Packing {Key}")
+                print(f"Saving data in {Key}")
                 D[Key] = self.Pack(getattr(self, Key), IDsToDicts, Packed)
+            if self._StoreTmpAttributes:
+                for Key, DefaultValue in self._TA.items():
+                    print(f"Saving default attribute {Key}")
+                    D[Key] = self.Pack(DefaultValue, IDsToDicts, Packed) # Class is reinstanciated with the default value
             return D
         if isinstance(Value, StorageItem):
             if Value in Packed:
@@ -175,4 +187,23 @@ class EntryPoint(StorageItem):
         Unpacked = {}
         
         StoredData = self.Unpack(DICT, D, IDsToDicts, Unpacked, NewItem = False)
+        for ID, Object in Unpacked.items():
+            print(f"Starting object {ID}: {Object}")
+            Object.Start()
         return StoredData
+
+'''
+The following decorator is especially useful with the previous storage system.
+It replaces any static attribute x of a class A that would be set at instanciation, when it is unsure that __init__ would be called, and the start function has possibly not been called yet.
+It also allows to compute that value x only once through a property, after which it gets stored in memory as '_static_'.
+'''
+def static(func):
+    VName = '_static_'+func.__name__
+    def Store(self):
+        if hasattr(self, VName):
+            return getattr(self, VName)
+        else:
+            res = func(self)
+            setattr(self, VName, res)
+            return res
+    return Store

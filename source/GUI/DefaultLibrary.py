@@ -1,4 +1,4 @@
-from Components import Wire, PinDict
+from Components import WireC, PinDict
 
 def W(Index, Name = ''):
     return ((PinDict.W, Index), Name)
@@ -10,7 +10,7 @@ def S(Index, Name = ''):
     return ((PinDict.S, Index), Name)
 
 Definitions = {
-    'Wire' :Wire,
+    'Wire' :WireC,
     'And': ([W(0),
              W(1)],
             [E(0)],

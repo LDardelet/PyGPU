@@ -22,7 +22,7 @@ class GUI:
 
         self.LoadGUIModes()
         self.Library = Circuit.CLibrary()
-        self.FH = Storage.FileHandler()
+        self.FH = Storage.FileHandlerC()
         self.SetTitle()
 
         self.LoadGUI()
@@ -36,9 +36,9 @@ class GUI:
         class DefaultModeC(ModeC):
             ID = 0
             def SetProps(self):
-                self.CheckConnexionAvailable()
+                self.CheckConnexionToggle()
             def LeaveProps(self):
-                self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.DISABLED)
+                self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.DISABLED)
             def ReloadProps(self):
                 self.ClearTmpComponent()
                 self.DisplayFigure.canvas.draw()
@@ -97,7 +97,7 @@ class GUI:
             os.mkdir(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder)
 
         if Filename is None:
-            self.CH = Circuit.ComponentsHandler()
+            self.CH = Circuit.ComponentsHandlerC()
         else:
             D = self.FH.Load(Filename)
             self.CH = D['handler']
@@ -165,7 +165,7 @@ class GUI:
             for Component in self.TmpComponents:
                 Component.Drag(self.Cursor)
         if self.Modes.Default:
-            self.CheckConnexionAvailable()
+            self.CheckConnexionToggle()
         self.Draw()
 
     def NextZoom(self):
@@ -277,12 +277,15 @@ class GUI:
         self.CH.ToggleConnexion(self.Cursor)
         self.MoveHighlight()
         self.Draw()
-    def CheckConnexionAvailable(self):
-        Column = self.CH.Map[self.Cursor[0], self.Cursor[1], :]
-        if not Column[-1] and (Column[:-1] != 0).sum() > 3:
-            self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.NORMAL)
+    def CheckConnexionToggle(self):
+        if self.CH.CanToggleConnexion(self.Cursor):
+            self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.NORMAL)
         else:
-            self.MainFrame.Board.Controls.ToggleConnexion.configure(state = Tk.DISABLED)
+            self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.DISABLED)
+        if self.CH.CursorConnected(self.Cursor):
+            self.MainFrame.Board.Controls.ToggleConnexionButton.configure(image = self._Icons['CrossedDotImage'])
+        else:
+            self.MainFrame.Board.Controls.ToggleConnexionButton.configure(image = self._Icons['DotImage'])
 
     def LoadGUI(self):
         self._Icons = {}
@@ -397,7 +400,8 @@ class GUI:
         self.WireButtons = (self.MainFrame.Board.Controls.WireStraight, self.MainFrame.Board.Controls.WireDiagonal)
         self.SetWireBuildMode(Params.GUI.Behaviour.DefaultWireBuildMode)
         self._Icons['DotImage'] = Tk.PhotoImage(file="./images/Dot.png").subsample(10)
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexion", image=self._Icons['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self._ToggleConnexion())
+        self._Icons['CrossedDotImage'] = Tk.PhotoImage(file="./images/CrossedDot.png").subsample(10)
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexionButton", image=self._Icons['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self._ToggleConnexion())
 
         self.MainFrame.Board.Controls.AddWidget(ttk.Separator, orient = 'vertical')
 

@@ -6,37 +6,60 @@ from Console import Log, LogSuccess, LogWarning, LogError
 import DefaultLibrary
 from Storage import StorageItem
 
-class ComponentsHandler(StorageItem):
+class ComponentsHandlerC(StorageItem):
     LibRef = "ComponentsHandler"
     def __init__(self):
-        self.StoreAttribute('MaxID', 0)
-        self.StoreAttribute('Components', {})
-        self.StoreAttribute('Groups', {})
-        self.StoreAttribute('Casings', {})
+        self.StoredAttribute('MaxID', 0)
+        self.StoredAttribute('Components', {})
+        self.StoredAttribute('Groups', {})
+        self.StoredAttribute('Casings', {})
         self.Start()
 
     def Start(self):
-        self.LiveUpdate = True
         self.Map = np.zeros((Params.Board.Size, Params.Board.Size, 9), dtype = int)
         for Component in self.Components.values():
             self.RegisterMap(Component)
 
-    def NewGroup(self, Comp):
-        Group = GroupC(Comp, Comp.ID)
+        GroupC.Handler = self
+        self.LiveUpdate = True
+        self.Ready = True
+        self.AwaitingUpdates = set()
+
+    def NewGroup(self, Component):
+        Group = GroupC(Component)
         self.Groups[Group.ID] = Group
-        return Group
 
     def Trigger(func):
-        def Register(self, *args, **kwargs):
-            self.AffectedGroups = {}
+        def RegisterTrigger(self, *args, **kwargs):
+            self.Ready = False
             output = func(self, *args, **kwargs)
             if self.LiveUpdate:
-                self.ComputeChain()
+                self.SolveRequests()
+            self.Ready = True
             return output
-        return Register
+        return RegisterTrigger
 
     def ComputeChain(self):
         Log("Updating chain")
+
+    def UpdateRequest(self, Component):
+        if not self.LiveUpdate:
+            return
+        if self.Ready:
+            Component()
+        else:
+            self.AwaitingUpdates.add(Component)
+
+    def SolveRequests(self):
+        UpdatedComponents = set()
+        while self.AwaitingUpdates:
+            Component = self.AwaitingUpdates.pop()
+            if Component in UpdatedComponents:
+                LogWarning(f"{Component} entered an unstable recursive loop")
+                break
+            print(f"Calling {Component}")
+            Component()
+            UpdatedComponents.add(Component)
 
     @Trigger
     def Register(self, NewComponent):
@@ -54,22 +77,46 @@ class ComponentsHandler(StorageItem):
 
         for Child in NewComponent.Children:
             self.SetComponent(Child)
-            self.LinkToGrid(Child)
             Child.Fix()
         self.SetComponent(NewComponent)
-        self.LinkToGrid(NewComponent)
         NewComponent.Fix()
 
-        if self.LiveUpdate:
-            NewComponent() 
+        self.UpdateRequest(NewComponent)    
         return True
 
+    def CheckRoom(self, NewComponent):
+        NewLocations = NewComponent.AdvertisedLocations
+        IDs = self.Map[NewLocations[:,0], NewLocations[:,1], NewLocations[:,2]]
+        return (IDs == 0).all() # TODO : Ask for wire bridges
+            #LogWarning(f"Unable to register the new component, due to positions {NewLocations[np.where(IDs != 0), :].tolist()}")
+
+    def SetComponent(self, Component): # Sets the ID of a component and stores it. Handles links through LinkToGrid.
+        self.MaxID += 1
+        Component.ID = self.MaxID
+
+        self.Components[Component.ID] = Component
+        self.RegisterMap(Component)
+        if isinstance(Component, Components.CasedComponentC):
+            self.Casings[Component.ID] = Component
+            if Params.Board.CasingsOwnPinsBases: # Should not affect behaviour, purely internal handling
+                self.NewGroup(Component)
+            else:
+                CasingGroup.AddComponent(Component)
+        else:
+            self.NewGroup(Component)
+        self.LinkToGrid(Component)
+
     def LinkToGrid(self, NewComponent):
+        if isinstance(NewComponent, Components.ConnexionC):
+            for ID in NewComponent.Column[:-1]:
+                if ID:
+                    self.AddLink(ID, NewComponent.ID)
+            return
         for x,y,_ in NewComponent.AdvertisedLocations:
             ConnID = self.Map[x,y,-1]
             if ConnID == NewComponent.ID: # Need to check for location forbidden connexions
                 continue
-            if ConnID and self.Components[ConnID].Displayed: # Start by linking existing shown connexions on the advertized locations
+            if ConnID:
                 self.Components[ConnID].UpdateConnexions(self.Map[x,y,:])
                 self.AddLink(NewComponent.ID, ConnID)
         for x,y in NewComponent.AdvertisedConnexions: # Add automatically created connexions, in particular to existing hidden connexions
@@ -83,26 +130,11 @@ class ComponentsHandler(StorageItem):
             else:
                 self.AddConnexion((x,y)) # If not, we create it
 
-    def CheckRoom(self, NewComponent):
-        NewLocations = NewComponent.AdvertisedLocations
-        IDs = self.Map[NewLocations[:,0], NewLocations[:,1], NewLocations[:,2]]
-        return (IDs == 0).all() # TODO : Ask for wire bridges
-            #LogWarning(f"Unable to register the new component, due to positions {NewLocations[np.where(IDs != 0), :].tolist()}")
-
-    def SetComponent(self, Component): # Sets the ID of a component and stores it. Does not handle links.
-        self.MaxID += 1
-        Component.ID = self.MaxID
-
-        self.Components[Component.ID] = Component
-        self.RegisterMap(Component)
-        if isinstance(Component, Components.CasedComponent):
-            self.Casings[Component.ID] = Component
-            if Params.Board.CasingsOwnPinsBases: # Should not affect behaviour, purely internal handling
-                Component.Group = self.NewGroup(Component)
-            else:
-                Component.Group = CasingGroup
-        else:
-            Component.Group = self.NewGroup(Component)
+    def AddLink(self, ID1, ID2): # Must be here to ensure symmetric props
+        self.Components[ID1].Links.add(ID2)
+        self.Components[ID2].Links.add(ID1)
+        if self.Components[ID1].Group != self.Components[ID2].Group:
+            del self.Groups[self.Components[ID1].Group.Merge(self.Components[ID2].Group)]
 
     def RegisterMap(self, Component):
         for x, y, theta in Component.AdvertisedLocations:
@@ -115,7 +147,7 @@ class ComponentsHandler(StorageItem):
         Component.destroy()
 
     def ToggleConnexion(self, Location):
-        if self.Map[Location[0], Location[1],-1] and isinstance(self.Components[self.Map[Location[0], Location[1],-1]], Components.Connexion): # Second check for pin bases
+        if self.Map[Location[0], Location[1],-1] and isinstance(self.Components[self.Map[Location[0], Location[1],-1]], Components.ConnexionC): # Second check for pin bases
             self.RemoveConnexion(Location)
         else:
             self.AddConnexion(Location)
@@ -124,11 +156,9 @@ class ComponentsHandler(StorageItem):
         if Column[-1]:
             LogError(f"Connexion at {Location} already exists")
             return
-        NewConnexion = Components.Connexion(Location, Column)
+        NewConnexion = Components.ConnexionC(Location, Column)
         self.SetComponent(NewConnexion)
-        for ID in Column[:-1]:
-            if ID:
-                self.AddLink(ID, NewConnexion.ID)
+
     def RemoveConnexion(self, Location):
         Column = self.Map[Location[0], Location[1],:]
         if Column[-1]:
@@ -137,7 +167,7 @@ class ComponentsHandler(StorageItem):
         IDs = set()
         for ID in Column[:-1]:
             if ID:
-                if type(self.Components[ID]) != Components.Wire:
+                if type(self.Components[ID]) != Components.WireC:
                     LogWarning("Cannot remove connexion as it is linked to a component")
                     return
                 IDs.add(ID)
@@ -145,12 +175,6 @@ class ComponentsHandler(StorageItem):
         for ID in IDs:
             self.BreakLink(ID, ConnID)
         self.DestroyComponent(ConnID)
-
-    def AddLink(self, ID1, ID2): # Must be here to ensure symmetric props
-        self.Components[ID1].Links.add(ID2)
-        self.Components[ID2].Links.add(ID1)
-        if self.Components[ID1].Group != self.Components[ID2].Group:
-            del self.Groups[self.Components[ID1].Group.Merge(self.Components[ID2].Group)]
 
     def BreakLink(self, ID1, ID2): 
         try:
@@ -165,9 +189,20 @@ class ComponentsHandler(StorageItem):
     def CursorGroups(self, Location):
         return list({self.Components[ID].Group for ID in self.Map[Location[0], Location[1],:-1] if ID})
     def CursorComponents(self, Location):  # We remove ComponentPin from single component highlight as nothing can be done with them alone
-        return list({self.Components[ID] for ID in self.Map[Location[0], Location[1],:-1] if (ID and not isinstance(self.Components[ID], Components.ComponentPin))})
+        return list({self.Components[ID] for ID in self.Map[Location[0], Location[1],:-1] if (ID and not isinstance(self.Components[ID], Components.ComponentPinC))})
     def CursorCasings(self, Location):
         return list({Component for Component in self.Casings.values() if Component.Contains(Location)})
+    def CursorConnected(self, Location):
+        return bool(self.Map[Location[0], Location[1],-1])
+    def CanToggleConnexion(self, Location):
+        if not self.CursorConnected(Location):
+            return (self.Map[Location[0], Location[1],:-1] != 0).sum() > 3 
+        else:
+            ID = self.Map[Location[0], Location[1], -1]
+            C = self.Components[self.Map[Location[0], Location[1], -1]]
+            if not isinstance(C, Components.ConnexionC):
+                return False
+            return (C.NWires == 2 * len(C.IDs))
 
     def GroupsInfo(self, Location):
         NWires = 0
@@ -194,7 +229,7 @@ class ComponentsHandler(StorageItem):
 
     def Wired(self, Location):
         for ID in self.Map[Location[0], Location[1], :8]:
-            if ID and (isinstance(self.Components[ID], Components.Wire) or isinstance(self.Components[ID], Components.ComponentPin)):
+            if ID and (isinstance(self.Components[ID], Components.WireC) or isinstance(self.Components[ID], Components.ComponentPinC)):
                 return True
         return False
     def HasItem(self, Location):
@@ -213,23 +248,17 @@ class ComponentsHandler(StorageItem):
 
 class GroupC(StorageItem):
     LibRef = "Group"
-    def __init__(self, Component, ID): # To avoid creating useless new IDs, a group ID is define by the ID of its first component. May lead to issues later on, but unlikely.
-        self.StoreAttribute('ID', ID)
-        self.StoreAttribute('Components', {Component})
-        self.StoreAttribute('Level', Params.Board.GroupDefaultLevel)
-        self.StoreAttribute('SetBy', None)
-        self.Start()
-
-    def Start(self):
-        self.HighlightPlots = []
-        for Component in self.Components:
-            self.HighlightPlots += Component.HighlightPlots
+    Handler = None
+    def __init__(self, Component):
+        self.StoredAttribute('ID', Component.ID)
+        self.StoredAttribute('Components', {Component})
+        self.StoredAttribute('Level', Params.Board.GroupDefaultLevel)
+        self.StoredAttribute('SetBy', None)
+        Component.Group = self
 
     def Merge(self, Group): 
-        self.HighlightPlots += Group.HighlightPlots
         for Component in Group.Components:
-            Component.Group = self
-        self.Components.update(Group.Components)
+            self.AddComponent(Component)
 
         if self.IsSet:
             if Group.IsSet:
@@ -239,12 +268,13 @@ class GroupC(StorageItem):
         else:
             if Group.IsSet:
                 self.SetLevel(Group.Level, Group.SetBy)
+            else:
+                self.SetLevel(Params.Board.GroupDefaultLevel, None)
         return Group.ID
 
     def AddComponent(self, Component):
         Component.Group = self
         self.Components.add(Component)
-        self.HighlightPlots += Component.HighlightPlots
 
     def SetLevel(self, Level, Component):
         if not self.SetBy is None and Component != self.SetBy:
@@ -254,9 +284,11 @@ class GroupC(StorageItem):
         self.Level = Level
         for Component in self.Components:
             Component.UpdateLevel()
+            if Component.TriggersParent:
+                self.Handler.UpdateRequest(Component.Parent)
 
     def DualSetWarning(self, Component, funcStr = ''):
-        LogWarning(f"Group {self.ID} set by {Component} and {self.SetBy}" + bool(funcStr)*f" ({funcStr})")
+        LogWarning(f"Group {self.ID} set by {Component} and {self.SetBy}" + bool(funcStr)*f" (@{funcStr})")
 
     @property
     def IsSet(self):
@@ -264,11 +296,11 @@ class GroupC(StorageItem):
 
     def Highlight(self, var):
         for Component in self.Components:
-            if type(Component) != Components.ComponentPin:
+            if type(Component) != Components.ComponentPinC:
                 Component.Highlight(var)
     def Select(self, var):
         for Component in self.Components:
-            if type(Component) != Components.ComponentPin:
+            if type(Component) != Components.ComponentPinC:
                 Component.Select(var)
     def Clear(self):
         for Component in self.Components:
@@ -288,6 +320,8 @@ class CasingGroupC(StorageItem):
     LibRef = "CGC"
     def __repr__(self):
         return ""
+    def AddComponent(self, Component):
+        Component.Group = self
 CasingGroup = CasingGroupC()
 
 # Component template signature :
@@ -321,9 +355,9 @@ class BookC:
             LogWarning(f"Unable to load component {Name} from its definition")
             return
         self.__dict__[CompName] = type(CompName, 
-                                   (Components.CasedComponent, ), 
+                                   (Components.CasedComponentC, ), 
                                    {
-                                       '__init__': Components.CasedComponent.__init__,
+                                       #'__init__': Components.CasedComponentC.__init__,
                                        'CName': CompName,
                                        'Book': self.Name,
                                        'InputPinsDef'    : InputPinsDef,
@@ -343,21 +377,23 @@ class CLibrary:
         self.Books = []
         self.Special = {}
         self.AddBook(BookC('Standard', DefaultLibrary.Definitions))
-        self.Wire = Components.Wire
+        self.Wire = Components.WireC
 
-        self.AddSpecialStorageClass(Components.StateHandler)
-        self.AddSpecialStorageClass(Components.Connexion)
-        self.AddSpecialStorageClass(Components.ComponentPin)
+        self.AddSpecialStorageClass(Components.StateHandlerC)
+        self.AddSpecialStorageClass(Components.ConnexionC)
+        self.AddSpecialStorageClass(Components.ComponentPinC)
+        self.AddSpecialStorageClass(Components.InputPinC)
+        self.AddSpecialStorageClass(Components.OutputPinC)
         self.AddSpecialStorageClass(GroupC)
         self.AddSpecialStorageClass(CasingGroupC)
-        self.AddSpecialStorageClass(ComponentsHandler)
+        self.AddSpecialStorageClass(ComponentsHandlerC)
 
     def AddBook(self, Book):
         self.__dict__[Book.Name] = Book
         self.Books.append(Book.Name)
 
     def IsWire(self, C): # Checks if class or class instance
-        return C == Components.Wire or isinstance(C, Components.Wire)
+        return C == Components.WireC or isinstance(C, Components.WireC)
 
     def AddSpecialStorageClass(self, Class):
         if '.' in Class.LibRef:
