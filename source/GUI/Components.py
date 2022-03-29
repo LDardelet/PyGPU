@@ -2,7 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 import types
-from importlib import reload
+from functools import cached_property
+
 from Values import Colors, Params, PinDict, Levels
 from Console import Log, LogSuccess, LogWarning, LogError
 from Storage import StorageItem, static
@@ -373,8 +374,7 @@ class ComponentPinC(ComponentBase):
 
         self.Start()
 
-    @property
-    @static
+    @cached_property
     def PinBaseOffset(self):
         if self.Side == PinDict.W:
             return self.Parent.LocToSWOffset + np.array([0, self.Parent.Height-self.Index-1])
@@ -386,20 +386,16 @@ class ComponentPinC(ComponentBase):
             return self.Parent.LocToSWOffset + np.array([1+self.Index, 0])
         else:
             raise ValueError(f"Wrong component {self.Parent.CName} definition for pin {self.Index}")
-    @property
-    @static
+    @cached_property
     def BaseRotation(self):
         return {PinDict.E:0,
                 PinDict.N:1,
                 PinDict.W:2,
                 PinDict.S:3}[self.Side]
-    @property
-    @static
+    @cached_property
     def Offset(self):
-        print(self.BaseRotation)
         return self.PinBaseOffset + Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation)
-    @property
-    @static
+    @cached_property
     def TextBaseOffset(self):
         return self.PinBaseOffset - Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation)
 

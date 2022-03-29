@@ -192,18 +192,3 @@ class EntryPoint(StorageItem):
             Object.Start()
         return StoredData
 
-'''
-The following decorator is especially useful with the previous storage system.
-It replaces any static attribute x of a class A that would be set at instanciation, when it is unsure that __init__ would be called, and the start function has possibly not been called yet.
-It also allows to compute that value x only once through a property, after which it gets stored in memory as '_static_'.
-'''
-def static(func):
-    VName = '_static_'+func.__name__
-    def Store(self):
-        if hasattr(self, VName):
-            return getattr(self, VName)
-        else:
-            res = func(self)
-            setattr(self, VName, res)
-            return res
-    return Store
