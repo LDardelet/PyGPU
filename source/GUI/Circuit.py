@@ -173,7 +173,7 @@ class ComponentsHandlerC(StorageItem):
     def CursorComponents(self, Location):  # We remove ComponentPin from single component highlight as nothing can be done with them alone
         return list({self.Components[ID] for ID in self.Map[Location[0], Location[1],:-1] if (ID and not isinstance(self.Components[ID], Components.ComponentPinC))})
     def CursorCasings(self, Location):
-        return list({Component for Component in self.Casings.values() if Component.Contains(Location)})
+        return list({Component for Component in self.Casings.values() if Location in Component})
     def CursorConnected(self, Location):
         return bool(self.Map[Location[0], Location[1],-1])
     def CanToggleConnexion(self, Location):

@@ -37,7 +37,7 @@ class Colors:
             0: C.yellow,    # Building
             1: C.white,     # Fixed, undefined.
             2: C.red,       # Being removed
-            3: C.yellow,       # Selected
+            3: C.yellow,    # Selected
         }
         Levels = {
             Levels.Undef : C.white,

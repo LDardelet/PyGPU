@@ -131,7 +131,7 @@ class StorageItem(metaclass = Meta):
             #for Key in MissingAttributes:
             #    Log(f"Missing attribute : {Key}", LogTab)
 
-            Log(f"Unpacked new object {self} as ID {ID}", LogTab)
+            Log(f"Unpacked new object {self.LibRef} with ID {ID}", LogTab)
 #            self.Start()
 #            Log(f"{self} started", LogTab)
             return

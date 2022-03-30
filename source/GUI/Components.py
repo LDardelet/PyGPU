@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-import types
 from functools import cached_property
 
 from Values import Colors, Params, PinDict, Levels
@@ -18,20 +17,18 @@ class StateHandlerC(StorageItem):
     def __init__(self, Comp, StartState = 0): # Starts building by default
         self.StoredAttribute('Comp', Comp)
         self.StoredAttribute('State', StartState)
-    @property
-    def Building(self):
-        return self.State == self.States.Building
-    @property
-    def Fixed(self):
-        return self.State == self.States.Fixed
+    def __getattr__(self, key):
+        if hasattr(self.States, key):
+            return self.State == getattr(self.States, key)
+        return self.__getattribute__(key)
     def Fix(self):
         self.State = self.States.Fixed
         self.UpdateColor()
-    @property
-    def Selected(self):
-        return self.State == self.States.Selected
     def Select(self):
         self.State = self.States.Selected
+        self.UpdateColor()
+    def Remove(self):
+        self.State = self.States.Removing
         self.UpdateColor()
     def UpdateColor(self):
         Color = self.Color
@@ -96,17 +93,14 @@ class ComponentBase(StorageItem):
     def LinkedTo(self, Component):
         return Component in self.Links
 
-    @property
-    def Selected(self):
-        return self.State.Selected
     def Select(self, var):
         if var:
-            if self.Selected:
+            if self.State.Selected:
                 return {None}
             self.State.Select()
             return {self}
         else:
-            if not self.Selected:
+            if not self.State.Selected:
                 return {None}
             self.State.Fix()
             return {self}
@@ -191,7 +185,7 @@ class ComponentBase(StorageItem):
     def Clear(self): # Falls back from temporary state to fixed state, or removed
         if self.State.Building:
             self.destroy()
-        elif self.Selected:
+        elif self.State.Selected or self.State.Removing:
             self.Select(False)
 
     def destroy(self):
@@ -238,29 +232,6 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
             PinsList.append(Pin)
 
     def Start(self):
-        self.Width = 1
-        self.Height = 1
-        for (Side, Index), Name in self.InputPinsDef+self.OutputPinsDef:
-            if Side == PinDict.W or Side == PinDict.E:
-                self.Width = max(self.Width, Index+1)
-            else:
-                self.Height= max(self.Height,Index+1)
-
-        if self.ForceWidth:
-            if self.Width > self.ForceWidth:
-                raise ValueError(f"Unable to place all pins on component {self.CName} with constrained width {self.ForceWidth}")
-            self.Width = self.ForceWidth
-        else:
-            self.Width = max(self.Width, Params.Board.ComponentMinWidth)
-        if self.ForceHeight:
-            if self.Height > self.ForceHeight:
-                raise ValueError(f"Unable to place all pins on component {self.CName} with constrained height {self.ForceHeight}")
-            self.Height = self.ForceHeight
-        else:
-            self.Height = max(self.Height, Params.Board.ComponentMinHeight)
-
-        self.LocToSWOffset = -np.array([self.Width//2, self.Height//2])
-
         if self.Callback is None:
             if self.Schematics is None:
                 raise ValueError("Component must have exactly a callback or an inner schematics to run (0 given)")
@@ -271,6 +242,36 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
             self.Run = self.__class__.Callback
 
         super().Start()
+
+    @cached_property
+    def Width(self):
+        Width = 1
+        for (Side, Index), Name in self.InputPinsDef+self.OutputPinsDef:
+            if Side == PinDict.W or Side == PinDict.E:
+                Width = max(Width, Index+1)
+        if self.ForceWidth:
+            if Width > self.ForceWidth:
+                raise ValueError(f"Unable to place all pins on component {self.CName} with constrained width {self.ForceWidth}")
+            return self.ForceWidth
+        else:
+            return max(Width, Params.Board.ComponentMinWidth)
+
+    @cached_property
+    def Height(self):
+        Height = 1
+        for (Side, Index), Name in self.InputPinsDef+self.OutputPinsDef:
+            if Side == PinDict.N or Side == PinDict.S:
+                Height= max(Height,Index+1)
+        if self.ForceHeight:
+            if Height > self.ForceHeight:
+                raise ValueError(f"Unable to place all pins on component {self.CName} with constrained height {self.ForceHeight}")
+            return self.ForceHeight
+        else:
+            return max(Height, Params.Board.ComponentMinHeight)
+
+    @cached_property
+    def LocToSWOffset(self):
+        return -np.array([self.Width//2, self.Height//2])
 
     def __call__(self):
         if not self.InputReady:
@@ -299,7 +300,7 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
         self.Location = np.array(Cursor)
         self.UpdateLocation()
 
-    def Contains(self, Location):
+    def __contains__(self, Location):
         P1 = self.Location + RotateOffset(self.LocToSWOffset, self.Rotation)
         P2 = self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height]), self.Rotation)
         return (Location >= np.minimum(P1, P2)).all() and (Location <= np.maximum(P1, P2)).all()
@@ -457,7 +458,7 @@ class ComponentPinC(ComponentBase):
         return self.Location.reshape((1,2))
 
     def __repr__(self):
-        return f"{self.Parent} {self.CName} {self.Name}"
+        return f"{self.Parent} {self.CName} {self.Name} ({self.ID})"
 
 class InputPinC(ComponentPinC):
     CName = "Input Pin"
