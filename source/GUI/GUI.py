@@ -11,12 +11,14 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 
 from Console import ConsoleWidget, Log, LogSuccess, LogWarning, LogError
 from Values import Colors, Params
+from Tools import Void, ModesDict, ModeC, SFrame
 import Circuit
 import Storage
 
 matplotlib.use("TkAgg")
 
 class GUI:
+    Modes = ModesDict()
     def __init__(self):
         self.MainWindow = Tk.Tk()
 
@@ -33,44 +35,7 @@ class GUI:
         self.MainWindow.mainloop()
 
     def LoadGUIModes(self):
-        class DefaultModeC(ModeC):
-            ID = 0
-            def SetProps(self):
-                self.CheckConnexionToggle()
-            def LeaveProps(self):
-                self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.DISABLED)
-            def ReloadProps(self):
-                self.ClearTmpComponent()
-                self.DisplayFigure.canvas.draw()
-        class ConsoleModeC(ModeC):
-            ID = 1
-            def SetProps(self):
-                self.MainFrame.Console.ConsoleInstance.text.see(Tk.END)
-                if self.MainWindow.focus_get() != self.MainFrame.Console.ConsoleInstance.text:
-                    self.MainFrame.Console.ConsoleInstance.text.focus_set()
-            def LeaveProps(self):
-                self.MainWindow.focus_set()
-        class BuildModeC(ModeC):
-            ID = 2
-            def SetProps(self):
-                self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.HiddenAlpha)
-            def LeaveProps(self):
-                self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.DefaultAlpha)
-                self.ColorLibComponent(None)
-            def ReloadProps(self):
-                self.ClearTmpComponent()
-        class ModesDict:
-            Default = DefaultModeC()
-            Console = ConsoleModeC()
-            Build =   BuildModeC()
-            def __init__(self):
-                self.List = (self.Default, self.Console, self.Build)
-            @property
-            def Current(self):
-                return ModeC.Current
-
         ModeC.GUI = self
-        self.Modes = ModesDict()
 
     def ClearBoard(self):
         self.CH.LiveUpdate = False # Possibly useless
@@ -104,8 +69,8 @@ class GUI:
 
         self.Rotation = 0
         self.CanHighlight = [None]
-        self.Highlighed = None
-        self.TmpComponents = []
+        self.Highlighted = None
+        self.TmpComponents = set()
 
         self.SetView()
 
@@ -119,12 +84,12 @@ class GUI:
     def StartComponent(self, CClass):
         self.ColorLibComponent(self.CompToButtonMap[CClass])
         self.Modes.Build()
-        self.TmpComponents.append(CClass(self.Cursor, self.Rotation))
+        self.TmpComponents.add(CClass(self.Cursor, self.Rotation))
         self.Draw()
 
     def ClearTmpComponent(self):
         while self.TmpComponents:
-            self.TmpComponents.pop(0).Clear()
+            self.TmpComponents.pop().Clear()
 
     def OnKeyMove(self, Motion, Mod):
         if self.Modes.Console:
@@ -204,43 +169,47 @@ class GUI:
         self.WireButtons[mode].configure(background = Colors.GUI.Widget.pressed)
         self.WireButtons[1-mode].configure(background = Colors.GUI.Widget.default)
         self.Library.Wire.BuildMode = mode
-        if self.Modes.Build and self.Library.IsWire(self.TmpComponents[0]):
-            self.TmpComponents[0].SetBuildMode(mode)
+        if self.Modes.Build:
+            for Component in self.TmpComponents:
+                if self.Library.IsWire(Component):
+                    Component.SetBuildMode(mode)
             self.Draw()
 
     def Set(self):
         Joins = self.CH.HasItem(self.Cursor)
         if self.Modes.Build:
-            if self.TmpComponents:
-                if self.CH.Register(self.TmpComponents[0]):
+            PreviousCComp = None
+            while self.TmpComponents:
+                Component = self.TmpComponents.pop()
+                if self.CH.Register(Component):
                     self.MoveHighlight()
-                    PreviousCComp = self.TmpComponents.pop(0).__class__
-                    if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(PreviousCComp) or not Params.GUI.Behaviour.StopWireOnJoin or not Joins):
-                        self.StartComponent(PreviousCComp)
-                    else:
-                        self.Modes.Default()
-                        self.Draw()
+                    PreviousCComp = Component.__class__
+            if not PreviousCComp is None and Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(PreviousCComp) or not Params.GUI.Behaviour.StopWireOnJoin or not Joins):
+                self.StartComponent(PreviousCComp)
+            else:
+                self.Modes.Default()
+                self.Draw()
         elif self.Modes.Default:
             if self.CH.Wired(self.Cursor):
                 self.StartComponent(self.Library.Wire)
 
     def Switch(self):
-        if self.Modes.Build and self.Library.IsWire(self.TmpComponents[0]):
-            self.SetWireBuildMode()
-        if self.Modes.Default:
+        if self.Modes.Build:
+            for Component in self.TmpComponents:
+                if self.Library.IsWire(Component):
+                    self.SetWireBuildMode()
+                    break
+        elif self.Modes.Default:
             self.NextHighlight()
             self.DisplayFigure.canvas.draw()
 
+    @Modes.Default
     def Select(self):
-        if not self.Modes.Default:
-            return
-        if not self.Highlighed is None:
-            if self.Highlighed not in self.TmpComponents:
-                self.TmpComponents.append(self.Highlighed)
-                self.Highlighed.Select(True)
+        if not self.Highlighted is None:
+            if not self.Highlighted.Selected:
+                self.TmpComponents.update(self.Highlighted.Select(True))
             else:
-                self.TmpComponents.remove(self.Highlighed)
-                self.Highlighed.Select(False)
+                self.TmpComponents.difference_update(self.Highlighted.Select(False))
             self.DisplayFigure.canvas.draw()
 
     def Rotate(self, var):
@@ -250,32 +219,40 @@ class GUI:
         if self.TmpComponents:
             self.Draw()
 
-    def MoveHighlight(self):
-        self.CanHighlight = [Group for Group in self.CH.CursorGroups(self.Cursor) if len(Group) > 1] + self.CH.CursorComponents(self.Cursor) + self.CH.CursorCasings(self.Cursor) # Single item groups would create odd behaviour
+    def MoveHighlight(self, Reset = False):
+        self.CanHighlight = [Group for Group in self.CH.CursorGroups(self.Cursor) if len(Group) > 1] \
+                            + self.CH.CursorComponents(self.Cursor) \
+                            + self.CH.CursorCasings(self.Cursor) # Single item groups would create dual highlight of one component
         if not self.CanHighlight:
             self.CanHighlight = [None]
-        if self.Highlighed not in self.CanHighlight:
+        if not (self.Highlighted in self.CanHighlight) or Reset:
             self.SwitchHighlight(self.CanHighlight[0])
     def NextHighlight(self):
-        self.SwitchHighlight(self.CanHighlight[(self.CanHighlight.index(self.Highlighed)+1)%len(self.CanHighlight)])
+        self.SwitchHighlight(self.CanHighlight[(self.CanHighlight.index(self.Highlighted)+1)%len(self.CanHighlight)])
+        self.UpdateHighlightLabel()
     def SwitchHighlight(self, Item):
-        if Item == self.Highlighed:
-            return
-        if not self.Highlighed is None:
-            self.Highlighed.Highlight(False)
-        self.Highlighed = Item
+        if not self.Highlighted is None:
+            self.Highlighted.Highlight(False)
+        self.Highlighted = Item
         if not Item is None:
-            self.Highlighed.Highlight(True)
+            self.Highlighted.Highlight(True)
+    def UpdateHighlightLabel(self):
+        if self.Highlighted is None:
+            Info = ""
+        else:
+            Info = str(self.Highlighted)
+        self.MainFrame.Board.DisplayToolbar.Labels.HighlightLabel['text'] = Info
 
     def Draw(self):
         GroupsInfo = self.CH.GroupsInfo(self.Cursor)
         self.MainFrame.Board.DisplayToolbar.Labels.CursorLabel['text'] = f"{self.Cursor.tolist()}" + bool(GroupsInfo)*": " + self.CH.GroupsInfo(self.Cursor)
-        self.MainFrame.Board.DisplayToolbar.Labels.CasingLabel['text'] = self.CH.CasingsInfo(self.Cursor)
+        self.UpdateHighlightLabel()
         self.DisplayFigure.canvas.draw()
 
-    def _ToggleConnexion(self):
+    @Modes.Default
+    def ToggleConnexion(self):
         self.CH.ToggleConnexion(self.Cursor)
-        self.MoveHighlight()
+        self.MoveHighlight(Reset = True)
         self.Draw()
     def CheckConnexionToggle(self):
         if self.CH.CanToggleConnexion(self.Cursor):
@@ -310,7 +287,7 @@ class GUI:
         self.KeysFunctionsDict = {}
         self.MainWindow.bind('<Key>', lambda e: self.ConsoleFilter(self.KeysFunctionsDict.get(e.keysym.lower(), {}).get(e.state, Void), e.keysym.lower(), e.state))
 
-        self.AddControlKey(Controls.Connect, lambda key, mod: self._ToggleConnexion())
+        self.AddControlKey(Controls.Connect, lambda key, mod: self.ToggleConnexion())
         self.AddControlKey(Controls.Close,   lambda key, mod: self.Close(0))
         self.AddControlKey(Controls.Delete,  lambda key, mod: self.Delete())
         self.AddControlKey(Controls.Move,    lambda key, mod: self.Move())
@@ -401,7 +378,7 @@ class GUI:
         self.SetWireBuildMode(Params.GUI.Behaviour.DefaultWireBuildMode)
         self._Icons['DotImage'] = Tk.PhotoImage(file="./images/Dot.png").subsample(10)
         self._Icons['CrossedDotImage'] = Tk.PhotoImage(file="./images/CrossedDot.png").subsample(10)
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexionButton", image=self._Icons['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self._ToggleConnexion())
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexionButton", image=self._Icons['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self.ToggleConnexion())
 
         self.MainFrame.Board.Controls.AddWidget(ttk.Separator, orient = 'vertical')
 
@@ -461,7 +438,7 @@ class GUI:
             self.DisplayToolbar.children[button].config(command=command)
         self.DisplayToolbar.update()
         self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "CursorLabel", row = 0, column = 0, text = "")
-        self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "CasingLabel", row = 1, column = 0, text = "")
+        self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "HighlightLabel", row = 1, column = 0, text = "")
 
     def LoadRightPanel(self):
         pass
@@ -497,119 +474,6 @@ class GUI:
         self.MainWindow.quit()
         self.Restart = Restart
         #self.MainWindow.destroy()
-
-def Void(*args, **kwargs):
-    pass
-    #print(args[0])
-
-class ModeC:
-    GUI = None
-    Current = None
-    ID = None
-    Name = None
-    Color = None
-    def __init__(self):
-        self.Key = Params.GUI.Controls.Modes.get(self.ID, None)
-        self.Name = Params.GUI.ModesNames[self.ID]
-        self.Color = Colors.GUI.Modes[self.ID]
-        if self.Current is None:
-            ModeC.Current = self
-    def __call__(self, Advertise = False):
-        if self.Current == self:
-            self.__class__.ReloadProps(self.GUI) # This writing allows to make XProps functions like GUI class methods
-            return
-        if Advertise:
-            Log(f"Mode {self.Name}")
-        self.GUI.ClearTmpComponent() # If mode changes, we assume that the current component MUST be cleared
-        self.Current.__class__.LeaveProps(self.GUI)
-        ModeC.Current = self
-        self.__class__.SetProps(self.GUI)
-        self.GUI.Plots['Cursor'].set_color(self.Color)
-        if Params.GUI.View.CursorLinesWidth:
-            self.GUI.Plots['HCursor'].set_color(self.Color)
-            self.GUI.Plots['VCursor'].set_color(self.Color)
-        self.GUI.DisplayFigure.canvas.draw()
-    def __bool__(self):
-        return self.Current == self
-
-    def SetProps(self):
-        pass
-    def LeaveProps(self):
-        pass
-    def ReloadProps(self):
-        pass
-    @property
-    def IsActive(self):
-        return self.Current == self
-
-class SFrame:
-    def __init__(self, frame, Name="Main", Side = None, NameDisplayed = False):
-        self.frame = frame
-        self.Name = Name
-        self.Children = {}
-        self.Side = Side
-        self.NameDisplayed = NameDisplayed
-        
-    def AdvertiseChild(self, NewChild, Name):
-        if Name in self.Children:
-            raise Exception("Frame name already taken")
-        self.Children[Name] = NewChild
-        if Name != 'Name':
-            self.__dict__[Name] = NewChild
-
-    def AddFrame(self, Name, row=None, column=None, Side = None, Sticky = True, Border = True, NameDisplayed = False, **kwargs):
-        self.RemoveDefaultName()
-
-        if Name in self.Children:
-            raise Exception("Frame name already taken")
-        FrameKwargs = {}
-        if Border:
-            FrameKwargs["highlightbackground"]="black"
-            FrameKwargs["highlightthickness"]=2
-        NewFrame = SFrame(Tk.Frame(self.frame, **FrameKwargs), Name, Side = Side, NameDisplayed = NameDisplayed)
-        self.Children[Name] = NewFrame
-        self.__dict__[Name] = NewFrame
-
-        if self.Side is None:
-            if Sticky:
-                kwargs["sticky"] = Tk.NSEW
-            if row is None or column is None:
-                raise Exception(f"Frame {self.Name} must be packed to omit location when adding children")
-            NewFrame.frame.grid(row = row, column = column, **kwargs)
-        else:
-            if Sticky:
-                kwargs["fill"] = Tk.BOTH
-            NewFrame.frame.pack(side = self.Side, **kwargs)
-        NewFrame.AddWidget(Tk.Label, "Name", 0, 0, text = Name)
-        return NewFrame
-
-    def RemoveDefaultName(self):
-        if "Name" in self.Children and not self.NameDisplayed:
-            self.Children["Name"].destroy()
-            del self.Children["Name"]
-
-    def AddWidget(self, WidgetClass, Name = "", row=None, column=None, Sticky = True, **kwargs):
-        self.RemoveDefaultName()
-
-        if WidgetClass == Tk.Button:
-            kwargs['background'] = Colors.GUI.Widget.default
-        if Name != "" and Name in self.Children:
-            raise Exception("Widget name already taken")
-        NewWidget = WidgetClass(self.frame, **kwargs)
-        self.Children[Name] = NewWidget
-        self.__dict__[Name] = NewWidget
-        kwargs = {}
-        if self.Side is None:
-            if Sticky:
-                kwargs["sticky"] = Tk.NSEW
-            if row is None or column is None:
-                raise Exception(f"Frame {self.Name} must be packed to omit location when adding children")
-            NewWidget.grid(row = row, column = column, **kwargs)
-        else:
-            if Sticky:
-                kwargs["fill"] = Tk.BOTH
-            NewWidget.pack(side  = self.Side, **kwargs)
-        return NewWidget
 
 if __name__ == '__main__':
     G = GUI()

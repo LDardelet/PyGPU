@@ -6,7 +6,7 @@ from functools import cached_property
 
 from Values import Colors, Params, PinDict, Levels
 from Console import Log, LogSuccess, LogWarning, LogError
-from Storage import StorageItem, static
+from Storage import StorageItem
 
 class StateHandlerC(StorageItem):
     LibRef = 'StateHandler'
@@ -93,18 +93,23 @@ class ComponentBase(StorageItem):
             raise ValueError("Component already fixed")
         self.State.Fix()
 
-    def LinkedTo(self, ID):
-        return ID in self.Links
+    def LinkedTo(self, Component):
+        return Component in self.Links
 
+    @property
+    def Selected(self):
+        return self.State.Selected
     def Select(self, var):
         if var:
-            if self.State.Selected:
-                self.State.Fix() # If we select again a selected component, it means we unselect it
+            if self.Selected:
+                return {None}
             self.State.Select()
+            return {self}
         else:
-            if not self.State.Selected:
-                raise ValueError("Component not selected")
+            if not self.Selected:
+                return {None}
             self.State.Fix()
+            return {self}
 
     @property
     def CanFix(self): # Property that ensures all condition have been checked for this component to be fixed
@@ -186,7 +191,7 @@ class ComponentBase(StorageItem):
     def Clear(self): # Falls back from temporary state to fixed state, or removed
         if self.State.Building:
             self.destroy()
-        elif self.State.Selected:
+        elif self.Selected:
             self.Select(False)
 
     def destroy(self):
@@ -345,9 +350,11 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
         for Pin in self.Children:
             Pin.Highlight(var)
     def Select(self, var):
-        super().Select(var)
+        Switched = super().Select(var)
         for Pin in self.Children:
-            Pin.Select(var)
+            Switched.update(Pin.Select(var))
+        Switched.discard(None)
+        return Switched
 
     @property
     def AdvertisedLocations(self):
@@ -392,6 +399,7 @@ class ComponentPinC(ComponentBase):
                 PinDict.N:1,
                 PinDict.W:2,
                 PinDict.S:3}[self.Side]
+
     @cached_property
     def Offset(self):
         return self.PinBaseOffset + Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation)
@@ -592,9 +600,9 @@ class ConnexionC(ComponentBase):
     LibRef = "Connexion"
     DefaultLinewidth = 0
     DefaultMarkersize = Params.GUI.PlotsWidths.Connexion
-    def __init__(self, Location, Column): # Warning : 0 is stored in sets, to avoid many checks.
+    def __init__(self, Location, Column):
         super().__init__(Location)
-        self.StoredAttribute('Column', np.array(Column))
+        self.StoredAttribute('Column', np.array(Column[:8]))
 
         self.Start()
         self.State.Fix()
@@ -603,18 +611,20 @@ class ConnexionC(ComponentBase):
         self.plot(self.Location[0], self.Location[1], Highlight = False, marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = self.State.Color)
         self.CheckDisplay()
 
-    def UpdateConnexions(self, Column):
-        self.Column = np.array(Column)
+    def UpdateColumn(self, Column):
+        if Column[-1] != self.ID:
+            LogError(f"{self} not properly mapped, as advertised connexion ID is {Column[-1]}")
+        self.Column = np.array(Column[:8])
         self.CheckDisplay()
 
     @property
     def IDs(self):
-        IDs = set(self.Column[:8])
+        IDs = set(self.Column)
         IDs.discard(0)
         return IDs
     @property
     def NWires(self):
-        return (self.Column[:8] > 0).sum()
+        return (self.Column > 0).sum()
 
     def CheckDisplay(self):
         if self.NWires >= 3:
@@ -627,5 +637,12 @@ class ConnexionC(ComponentBase):
         return self.NWires >= 3
 
     @property
+    def CanBeRemoved(self):
+        return (self.NWires == 2 * len(self.IDs))
+
+    @property
     def AdvertisedLocations(self):
         return np.array([[self.Location[0], self.Location[1], -1]])
+
+    def __repr__(self):
+        return f"{self.CName} ({self.ID}) @ {self.Location}"

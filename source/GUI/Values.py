@@ -78,7 +78,7 @@ class Params:
             DefaultAlpha = 1.
             HiddenAlpha = 0.4
         class PlotsWidths:
-            HighlightFactor = 1.7
+            HighlightFactor = 2.5
             Wire = 1
             Connexion = 4
             Casing = 0.4
