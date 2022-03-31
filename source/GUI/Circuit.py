@@ -4,7 +4,7 @@ import Components
 from Values import Colors, Params, Levels
 from Console import Log, LogSuccess, LogWarning, LogError
 import DefaultLibrary
-from Storage import StorageItem
+from Storage import StorageItem, Modifies
 
 class ComponentsHandlerC(StorageItem):
     LibRef = "ComponentsHandler"
@@ -55,6 +55,7 @@ class ComponentsHandlerC(StorageItem):
             Component()
             UpdatedComponents.add(Component)
 
+    @Modifies
     @Building
     def Register(self, NewComponent):
         if not NewComponent.CanFix:
@@ -78,6 +79,7 @@ class ComponentsHandlerC(StorageItem):
         self.UpdateRequest(NewComponent)    
         return True
 
+    @Modifies
     @Building
     def Remove(self, Component):
         for Child in Component.Children:
@@ -111,7 +113,7 @@ class ComponentsHandlerC(StorageItem):
 
     def LinkToOthers(self, NewComponent):
         if isinstance(NewComponent, Components.ConnexionC):
-            for ID in NewComponent.Column[:-1]:
+            for ID in NewComponent.Column:
                 if ID:
                     self.Link(self.Components[ID], NewComponent)
             return
@@ -235,6 +237,7 @@ class GroupC(StorageItem):
         self.StoredAttribute('InitialComponent', Component)
         self.StoredAttribute('Components', set())
         self.StoredAttribute('Connexions', set())
+        self.StoredAttribute('Highlightables', set())
         self.StoredAttribute('Level', Params.Board.GroupDefaultLevel)
         self.StoredAttribute('SetBy', None)
         self.AddComponent(Component)
@@ -307,11 +310,14 @@ class GroupC(StorageItem):
         self.Components.add(NewComponent)
         if isinstance(NewComponent, Components.ConnexionC):
             self.Connexions.add(NewComponent)
+        if not isinstance(NewComponent, Components.ConnexionC) and not isinstance(NewComponent, Components.ComponentPinC):
+            self.Highlightables.add(NewComponent)
 
     def RemoveComponent(self, Component):
         Component.Group = None
         self.Components.remove(Component)
         self.Connexions.discard(Component)
+        self.Highlightables.discard(Component)
         if self.SetBy == Component:
             self.ResetDefaultLevel()
         return bool(self.Components)
@@ -325,7 +331,7 @@ class GroupC(StorageItem):
         self.SetBy = Component
         self.Level = Level
         for Component in self.Components:
-            Component.UpdateLevel()
+            Component.UpdateStyle()
             if Component.TriggersParent:
                 self.Handler.UpdateRequest(Component.Parent)
 
@@ -337,9 +343,8 @@ class GroupC(StorageItem):
         return not self.SetBy is None
 
     def Highlight(self, var):
-        for Component in self.Components:
-            if type(Component) != Components.ComponentPinC:
-                Component.Highlight(var)
+        for Component in self.Highlightables:
+            Component.Highlight(var)
     @property
     def Selected(self): # We assume that a group is only selected if the entire group is selected
         for Component in self.Components:
@@ -433,7 +438,6 @@ class CLibrary:
         self.AddBook(BookC('Standard', DefaultLibrary.Definitions))
         self.Wire = Components.WireC
 
-        self.AddSpecialStorageClass(Components.StateHandlerC)
         self.AddSpecialStorageClass(Components.ConnexionC)
         self.AddSpecialStorageClass(Components.ComponentPinC)
         self.AddSpecialStorageClass(Components.InputPinC)
@@ -441,6 +445,10 @@ class CLibrary:
         self.AddSpecialStorageClass(GroupC)
         self.AddSpecialStorageClass(CasingGroupC)
         self.AddSpecialStorageClass(ComponentsHandlerC)
+
+        self.AddSpecialStorageClass(Components.StatesC)
+        for State in Components.States.States:
+            self.AddSpecialStorageClass(State.__class__)
 
     def AddBook(self, Book):
         self.__dict__[Book.Name] = Book

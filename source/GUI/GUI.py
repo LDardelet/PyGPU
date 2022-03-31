@@ -25,9 +25,10 @@ class GUI:
         self.LoadGUIModes()
         self.Library = Circuit.CLibrary()
         self.FH = Storage.FileHandlerC()
-        self.SetTitle()
 
         self.LoadGUI()
+
+        self.Circuit = Circuit
 
         self.LoadBoardData()
 
@@ -38,8 +39,12 @@ class GUI:
         ModeC.GUI = self
 
     def ClearBoard(self):
+        if self.CH._Modified:
+            return False
         self.CH.LiveUpdate = False # Possibly useless
         self.DisplayAx.cla()
+        self.PlotView()
+        return True
 
     def SaveBoardData(self, SelectFilename = False):
         if self.FH.Filename is None or SelectFilename:
@@ -50,6 +55,8 @@ class GUI:
         self.FH.Save(handler = self.CH)
 
     def Open(self, Ask):
+        if not self.ClearBoard():
+            return
         if Ask:
             Filename = Tk.filedialog.askopenfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')
             if not Filename is None:
@@ -62,10 +69,12 @@ class GUI:
             os.mkdir(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder)
 
         if Filename is None:
+            self.FH.Filename = None
             self.CH = Circuit.ComponentsHandlerC()
         else:
             D = self.FH.Load(Filename)
             self.CH = D['handler']
+        self.SetTitle()
 
         self.Rotation = 0
         self.CanHighlight = [None]
@@ -220,7 +229,7 @@ class GUI:
             self.Draw()
 
     def MoveHighlight(self, Reset = False):
-        self.CanHighlight = [Group for Group in self.CH.CursorGroups(self.Cursor) if len(Group) > 1] \
+        self.CanHighlight = [Group for Group in self.CH.CursorGroups(self.Cursor) if len(Group.Highlightables) > 1] \
                             + self.CH.CursorComponents(self.Cursor) \
                             + self.CH.CursorCasings(self.Cursor) # Single item groups would create dual highlight of one component
         if not self.CanHighlight:
@@ -395,8 +404,18 @@ class GUI:
         self.DisplayAx.tick_params('both', left = False, bottom = False, labelleft = False, labelbottom = False)
         self.DisplayAx.set_facecolor((0., 0., 0.))
 
-        self.Plots = {}
+        self.DisplayCanvas = matplotlib.backends.backend_tkagg.FigureCanvasTkAgg(self.DisplayFigure, self.MainFrame.Board.View.frame)
+        self.DisplayCanvas.draw()
+        self.DisplayCanvas.mpl_connect('button_press_event', lambda e:self.OnClickMove(np.array([e.xdata, e.ydata])))
 
+        self.MainFrame.Board.View.AdvertiseChild(self.DisplayCanvas.get_tk_widget(), "Plot")
+        self.MainFrame.Board.View.Plot.grid(row = 0, column = 0)
+        self.Library.ComponentBase.Board = self.DisplayAx
+
+        self.PlotView()
+
+    def PlotView(self):
+        self.Plots = {}
         self.Plots['Cursor'] = self.DisplayAx.plot(0,0, marker = 'o', color = self.Modes.Current.Color)[0]
         if Params.GUI.View.CursorLinesWidth:
             self.Plots['HCursor'] = self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max], [0,0], linewidth = Params.GUI.View.CursorLinesWidth, color = self.Modes.Current.Color, alpha = 0.3)[0]
@@ -408,14 +427,6 @@ class GUI:
                                  [nLine*RLE, nLine*RLE], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
             self.Plots['VLines']=[self.DisplayAx.plot([nLine*RLE, nLine*RLE], 
                                  [-Params.Board.Max, Params.Board.Max], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
-
-        self.DisplayCanvas = matplotlib.backends.backend_tkagg.FigureCanvasTkAgg(self.DisplayFigure, self.MainFrame.Board.View.frame)
-        self.DisplayCanvas.draw()
-        self.DisplayCanvas.mpl_connect('button_press_event', lambda e:self.OnClickMove(np.array([e.xdata, e.ydata])))
-
-        self.MainFrame.Board.View.AdvertiseChild(self.DisplayCanvas.get_tk_widget(), "Plot")
-        self.MainFrame.Board.View.Plot.grid(row = 0, column = 0)
-        self.Library.ComponentBase.Board = self.DisplayAx
 
     def LoadDisplayToolbar(self):
         self.MainFrame.Board.DisplayToolbar.AddFrame("Buttons", Side = Tk.TOP, Border = False)

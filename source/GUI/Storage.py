@@ -56,6 +56,7 @@ class StorageItem(metaclass = Meta):
         if hasattr(self, '_SA'): # Stops any infinite loop for all non-overloaded __init__ inherited classes
             return
         self._SA = {'_SA', 'LibRef', '_StoreTmpAttributes'}
+        self._Modified = False
         if self._StoreTmpAttributes:
             self.StoredAttribute('_TA', {})
         self.__init__(*args, **kwargs) # Start method if left to be called when necessary in the __init__
@@ -92,6 +93,7 @@ class StorageItem(metaclass = Meta):
                 for Key, DefaultValue in self._TA.items():
                     print(f"Saving default attribute {Key}")
                     D[Key] = self.Pack(DefaultValue, IDsToDicts, Packed) # Class is reinstanciated with the default value
+            self._Modified = False
             return D
         if isinstance(Value, StorageItem):
             if Value in Packed:
@@ -121,6 +123,7 @@ class StorageItem(metaclass = Meta):
         if NewItem:
             ID = Type
             Unpacked[ID] = self
+            self._Modified = False
             #MissingAttributes = set(self._SA)
             for Key, Data in Value.items():
                 setattr(self, Key, self.Unpack(*Data, IDsToDicts, Unpacked, False, LogTab+1, Key))
@@ -144,8 +147,10 @@ class StorageItem(metaclass = Meta):
                 return Unpacked[ID]
             else:
                 Value = IDsToDicts[ID]
-                Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking new object {ID}", LogTab)
-                StorageItem.Library[Value.pop('LibRef')[1]](UnpackData = (ID, Value, IDsToDicts, Unpacked, True, LogTab))
+                print(Value)
+                LibRef = Value.pop('LibRef')[1]
+                Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking new object {ID} from LibRef {LibRef}", LogTab)
+                StorageItem.Library[LibRef](UnpackData = (ID, Value, IDsToDicts, Unpacked, True, LogTab))
                 #Unpacked[ID] = StorageItem.Library[Value.pop('LibRef')[1]](UnpackData = (ID, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab))
                 #Unpacked[ID].Unpack(DICT, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab)
                 return Unpacked[ID]
@@ -159,7 +164,6 @@ class StorageItem(metaclass = Meta):
             return set([self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+1) for VValue in Value])
         elif Type == ARRAY:
             #return np.array([self.Unpack(*VValue, IDsToDicts, Unpacked, LogTab+1) for VValue in Value])
-            Log(bool(KeyName)*f"{KeyName}: " + f"Unpacked {type(Value)}", LogTab)
             return Value
         elif Type == BUILDIN:
             Log(bool(KeyName)*f"{KeyName}: " + f"Unpacked {type(Value)} value {Value}", LogTab)
@@ -192,3 +196,8 @@ class EntryPoint(StorageItem):
             Object.Start()
         return StoredData
 
+def Modifies(func):
+    def ModFunc(self, *args, **kwargs):
+        self._Modified = True
+        return func(self, *args, **kwargs)
+    return ModFunc

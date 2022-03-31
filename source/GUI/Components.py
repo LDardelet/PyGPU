@@ -7,46 +7,51 @@ from Values import Colors, Params, PinDict, Levels
 from Console import Log, LogSuccess, LogWarning, LogError
 from Storage import StorageItem
 
-class StateHandlerC(StorageItem):
-    LibRef = 'StateHandler'
-    class States:
-        Building = 0
-        Fixed = 1
-        Removing = 2
-        Selected = 3
-    def __init__(self, Comp, StartState = 0): # Starts building by default
-        self.StoredAttribute('Comp', Comp)
-        self.StoredAttribute('State', StartState)
+class StatesC(StorageItem):
+    Building = 0
+    Fixed = 1
+    Removing = 2
+    Selected = 3
+    LibRef = "StatesC"
+    def __init__(self):
+        self.StoredAttribute('States', set())
+        for State, Value in list(self.__class__.__dict__.items()):
+            if State[0] != '_' and Value != 'LibRef':
+                StateClassName = State+'C'
+                NewStateC = type(StateClassName,
+                                   (StateC, ),
+                                   {
+                                       'LibRef' : StateClassName,
+                                       'Name'   : State,
+                                       'Value'  : Value,
+                                    })
+                NewState = NewStateC(self)
+                setattr(self, State, NewState)
+                self.States.add(NewState)
+
+class StateC(StorageItem):
+    Value = None
+    Name = None
+    LibRef = None
+    def __init__(self, States):
+        self.StoredAttribute('Parent', States) # Ensures that the 4 states are all saved, and all created when loading
     def __getattr__(self, key):
-        if hasattr(self.States, key):
-            return self.State == getattr(self.States, key)
-        return self.__getattribute__(key)
-    def Fix(self):
-        self.State = self.States.Fixed
-        self.UpdateColor()
-    def Select(self):
-        self.State = self.States.Selected
-        self.UpdateColor()
-    def Remove(self):
-        self.State = self.States.Removing
-        self.UpdateColor()
-    def UpdateColor(self):
-        Color = self.Color
-        for Plot in self.Comp.LevelsPlots:
-            Plot.set_color(Color)
-        Color = self.NeutralColor
-        for Plot in self.Comp.NeutralPlots:
-            Plot.set_color(Color)
-    @property
-    def Color(self):
-        if not self.Fixed or self.Comp.Group is None:
-            Color = Colors.Component.Modes[self.State]
+        if hasattr(StatesC, key):
+            return self.Value == getattr(StatesC, key)
         else:
-            Color = self.Comp.Group.Color
-        return Color
-    @property
-    def NeutralColor(self):
-        return Colors.Component.Modes[self.State]
+            return self.__getattribute__(key)
+    def __repr__(self):
+        return self.Name
+    @cached_property
+    def Color(self):
+        return Colors.Component.Modes[self.Value]
+    @cached_property
+    def Alpha(self):
+        if self.Selected:
+            return Params.GUI.PlotsStyles.AlphaSelection
+        return 1.
+
+States = StatesC()
 
 class ComponentBase(StorageItem):
     Board = None
@@ -59,7 +64,7 @@ class ComponentBase(StorageItem):
         self.StoredAttribute('Location', Location)
         self.StoredAttribute('Rotation', Rotation)
         self.StoredAttribute('ID', None)
-        self.StoredAttribute('State', StateHandlerC(self))
+        self.StoredAttribute('State', States.Building)
         self.StoredAttribute('Group', None)
         self.StoredAttribute('Children', set())
         self.StoredAttribute('Links', set())
@@ -86,34 +91,54 @@ class ComponentBase(StorageItem):
             Plot.set_markersize(self.DefaultMarkersize*Factor)
 
     def Fix(self):
-        if self.State.Fixed:
-            raise ValueError("Component already fixed")
-        self.State.Fix()
-
-    def LinkedTo(self, Component):
-        return Component in self.Links
-
+        self.State = States.Fixed
+        self.UpdateStyle()
     def Select(self, var):
         if var:
             if self.State.Selected:
                 return {None}
-            self.State.Select()
+            self.State = States.Selected
+            self.UpdateStyle()
             return {self}
         else:
             if not self.State.Selected:
                 return {None}
-            self.State.Fix()
+            self.State = States.Fixed
+            self.UpdateStyle()
             return {self}
+
+    def LinkedTo(self, Component):
+        return Component in self.Links
 
     @property
     def CanFix(self): # Property that ensures all condition have been checked for this component to be fixed
         return True
-
     def Drag(self, Cursor):
         pass
-
     def PlotInit(self):
         pass
+
+    @property
+    def Color(self):
+        if self.State.Fixed or self.State.Selected:
+            return self.Group.Color
+        else:
+            return self.State.Color
+    @property
+    def NeutralColor(self):
+        return self.State.Color
+    @property
+    def Alpha(self):
+        return self.State.Alpha
+
+    def UpdateStyle(self):
+        Color, NeutralColor, Alpha = self.Color, self.NeutralColor, self.Alpha
+        for Plot in self.LevelsPlots:
+            Plot.set_color(Color)
+            Plot.set_alpha(Alpha)
+        for Plot in self.NeutralPlots:
+            Plot.set_color(NeutralColor)
+            Plot.set_alpha(Alpha)
 
     def plot(self, *args, Highlight = True, LevelPlot = True, **kwargs):
         Plot = self.Board.plot(*args, **kwargs)[0]
@@ -141,12 +166,12 @@ class ComponentBase(StorageItem):
     @property
     def InputReady(self): # Base components are not ready as they should not be updated (wires, connexions, ...)
         return False
-    def UpdateLevel(self):
-        self.State.UpdateColor()
     def __call__(self):
         pass
     @property
     def Level(self):
+        if self.Group is None:
+            return Levels.Undef
         return self.Group.Level
     @property
     def Location(self):
@@ -293,6 +318,10 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
         return Level
 
     @property
+    def Color(self):
+        return self.NeutralColor
+
+    @property
     def InputReady(self):
         return (not None in self.Input)
 
@@ -312,15 +341,14 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
         self.Plots[4].set_x(TLoc[0])
         self.Plots[4].set_y(TLoc[1])
         self.Plots[4].set_rotation(self.TextRotation)
-
         for Pin in self.Children:
             Pin.UpdateLocation()
 
     def PlotInit(self):
+        Color, Alpha = self.Color, self.Alpha
         for Xs, Ys in self.CasingSides:
-            self.plot(Xs, Ys, color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = self.DefaultLinewidth, LevelPlot = False)
-
-        self.text(*self.TextLocation, s = (self.CName, self.Symbol)[bool(self.Symbol)], color = self.State.Color, va = 'center', ha = 'center', rotation = self.TextRotation)
+            self.plot(Xs, Ys, color = Color, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = self.DefaultLinewidth, alpha = Alpha, LevelPlot = False)
+        self.text(*self.TextLocation, s = (self.CName, self.Symbol)[bool(self.Symbol)], color = Color, va = 'center', ha = 'center', rotation = self.TextRotation, alpha = Alpha)
 
     @property
     def TextLocation(self):
@@ -411,9 +439,10 @@ class ComponentPinC(ComponentBase):
     def PlotInit(self):
         Loc = self.Location
         BLoc = self.PinBaseLocation
-        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        Color, Alpha = self.Color, self.Alpha
+        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth, alpha = Alpha)
         if self.Name:
-            self.text(*self.TextLocation, s=self.Name, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = self.State.Color, **PinNameDict(self.Rotation + self.BaseRotation))
+            self.text(*self.TextLocation, s=self.Name, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.Rotation + self.BaseRotation))
 
     def UpdateLocation(self):
         Loc = self.Location
@@ -509,8 +538,9 @@ class WireC(ComponentBase):
         self.UpdateLocation()
 
     def PlotInit(self):
-        self.plot(self.Location[:2,0], self.Location[:2,1], color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
-        self.plot(self.Location[1:,0], self.Location[1:,1], color = self.State.Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth)
+        Color, Alpha = self.Color, self.Alpha
+        self.plot(self.Location[:2,0], self.Location[:2,1], color = Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth, alpha = Alpha)
+        self.plot(self.Location[1:,0], self.Location[1:,1], color = Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth, alpha = Alpha)
         self.UpdateLocation()
 
     @property
@@ -606,17 +636,17 @@ class ConnexionC(ComponentBase):
         self.StoredAttribute('Column', np.array(Column[:8]))
 
         self.Start()
-        self.State.Fix()
+        self.State = States.Fixed
 
     def PlotInit(self):
-        self.plot(self.Location[0], self.Location[1], Highlight = False, marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = self.State.Color)
-        self.CheckDisplay()
+        Color, Alpha = self.Color, self.Alpha
+        self.plot(self.Location[0], self.Location[1], Highlight = False, marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = Color, alpha = self.Alpha)
 
     def UpdateColumn(self, Column):
         if Column[-1] != self.ID:
             LogError(f"{self} not properly mapped, as advertised connexion ID is {Column[-1]}")
         self.Column = np.array(Column[:8])
-        self.CheckDisplay()
+        self.UpdateStyle()
 
     @property
     def IDs(self):
@@ -627,23 +657,16 @@ class ConnexionC(ComponentBase):
     def NWires(self):
         return (self.Column > 0).sum()
 
-    def CheckDisplay(self):
-        if self.NWires >= 3:
-            self.Plots[0].set_alpha(1.)
-        else:
-            self.Plots[0].set_alpha(0.)
-
     @property
-    def Displayed(self):
-        return self.NWires >= 3
-
+    def Alpha(self):
+        if self.NWires < 3:
+            return 0
+        return self.State.Alpha
     @property
     def CanBeRemoved(self):
         return (self.NWires == 2 * len(self.IDs))
-
     @property
     def AdvertisedLocations(self):
         return np.array([[self.Location[0], self.Location[1], -1]])
-
     def __repr__(self):
         return f"{self.CName} ({self.ID}) @ {self.Location}"

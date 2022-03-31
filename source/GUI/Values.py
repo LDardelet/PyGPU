@@ -34,10 +34,10 @@ class Colors:
         }
     class Component:
         Modes = {
-            0: C.yellow,    # Building
+            0: C.yellow,   # Building
             1: C.white,     # Fixed, undefined.
             2: C.red,       # Being removed
-            3: C.yellow,    # Selected
+            3: C.white,    # Selected
         }
         Levels = {
             Levels.Undef : C.white,
@@ -88,6 +88,7 @@ class Params:
             Connexion = '8'
             Casing = '-'
             PinNameLevelColored = True
+            AlphaSelection = 0.5
         class Controls:
             Moves = {
                 "right":np.array([1,0]),
