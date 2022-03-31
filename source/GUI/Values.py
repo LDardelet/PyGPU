@@ -88,7 +88,7 @@ class Params:
             Connexion = '8'
             Casing = '-'
             PinNameLevelColored = True
-            AlphaSelection = 0.5
+            AlphaSelection = 0.4
         class Controls:
             Moves = {
                 "right":np.array([1,0]),

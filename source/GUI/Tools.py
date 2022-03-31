@@ -33,10 +33,10 @@ class ModeC:
             return
         if Advertise:
             Log(f"Mode {self.Name}")
-        self.GUI.ClearTmpComponent() # If mode changes, we assume that the current component MUST be cleared
         self.Current.__class__.LeaveProps(self.GUI)
         ModeC.Current = self
         self.__class__.SetProps(self.GUI)
+        self.GUI.ClearTmpComponents() # If mode changes, we assume that the current component MUST be cleared
         self.GUI.Plots['Cursor'].set_color(self.Color)
         if Params.GUI.View.CursorLinesWidth:
             self.GUI.Plots['HCursor'].set_color(self.Color)
@@ -61,7 +61,7 @@ class DefaultModeC(ModeC):
     def LeaveProps(self):
         self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.DISABLED)
     def ReloadProps(self):
-        self.ClearTmpComponent()
+        self.ClearTmpComponents()
         self.DisplayFigure.canvas.draw()
 class ConsoleModeC(ModeC):
     ID = 1
@@ -79,7 +79,7 @@ class BuildModeC(ModeC):
         self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.DefaultAlpha)
         self.ColorLibComponent(None)
     def ReloadProps(self):
-        self.ClearTmpComponent()
+        self.ClearTmpComponents()
 class ModesDict:
     Default = DefaultModeC()
     Console = ConsoleModeC()

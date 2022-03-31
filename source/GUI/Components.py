@@ -8,26 +8,25 @@ from Console import Log, LogSuccess, LogWarning, LogError
 from Storage import StorageItem
 
 class StatesC(StorageItem):
-    Building = 0
-    Fixed = 1
-    Removing = 2
-    Selected = 3
+    Names = ['Building',
+             'Fixed',
+             'Removing', 
+             'Selected']
     LibRef = "StatesC"
     def __init__(self):
         self.StoredAttribute('States', set())
-        for State, Value in list(self.__class__.__dict__.items()):
-            if State[0] != '_' and Value != 'LibRef':
-                StateClassName = State+'C'
-                NewStateC = type(StateClassName,
-                                   (StateC, ),
-                                   {
-                                       'LibRef' : StateClassName,
-                                       'Name'   : State,
-                                       'Value'  : Value,
-                                    })
-                NewState = NewStateC(self)
-                setattr(self, State, NewState)
-                self.States.add(NewState)
+        for Value, State in enumerate(self.Names):
+            StateClassName = State+'C'
+            NewStateC = type(StateClassName,
+                               (StateC, ),
+                               {
+                                   'LibRef' : StateClassName,
+                                   'Name'   : State,
+                                   'Value'  : Value,
+                                })
+            NewState = NewStateC(self)
+            setattr(self, State, NewState)
+            self.States.add(NewState)
 
 class StateC(StorageItem):
     Value = None
@@ -35,11 +34,8 @@ class StateC(StorageItem):
     LibRef = None
     def __init__(self, States):
         self.StoredAttribute('Parent', States) # Ensures that the 4 states are all saved, and all created when loading
-    def __getattr__(self, key):
-        if hasattr(StatesC, key):
-            return self.Value == getattr(StatesC, key)
-        else:
-            return self.__getattribute__(key)
+        for Value, State in enumerate(self.Parent.Names):
+            self.StoredAttribute(State, Value == self.Value)
     def __repr__(self):
         return self.Name
     @cached_property
@@ -68,6 +64,11 @@ class ComponentBase(StorageItem):
         self.StoredAttribute('Group', None)
         self.StoredAttribute('Children', set())
         self.StoredAttribute('Links', set())
+
+    def __getattr__(self, State): # Overriding getattr to handle state checking
+        if State in StatesC.Names:
+            return getattr(self.State, State)
+        raise AttributeError(f"{State} is not an attribute of {self.__class__} nor a valid state")
 
     def Start(self):
         self.Highlighted = False
@@ -382,7 +383,6 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
         Switched = super().Select(var)
         for Pin in self.Children:
             Switched.update(Pin.Select(var))
-        Switched.discard(None)
         return Switched
 
     @property

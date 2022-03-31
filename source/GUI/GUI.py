@@ -18,7 +18,7 @@ import Storage
 matplotlib.use("TkAgg")
 
 class GUI:
-    Modes = ModesDict()
+    Modes = ModesDict() # Here as we need mode decorator
     def __init__(self):
         self.MainWindow = Tk.Tk()
 
@@ -52,6 +52,7 @@ class GUI:
             if not Filename is None:
                 self.FH.Filename = Filename
                 self.SetTitle()
+        self.ClearTmpComponents()
         self.FH.Save(handler = self.CH)
 
     def Open(self, Ask):
@@ -96,7 +97,7 @@ class GUI:
         self.TmpComponents.add(CClass(self.Cursor, self.Rotation))
         self.Draw()
 
-    def ClearTmpComponent(self):
+    def ClearTmpComponents(self):
         while self.TmpComponents:
             self.TmpComponents.pop().Clear()
 
@@ -187,17 +188,18 @@ class GUI:
     def Set(self):
         Joins = self.CH.HasItem(self.Cursor)
         if self.Modes.Build:
-            PreviousCComp = None
-            while self.TmpComponents:
-                Component = self.TmpComponents.pop()
-                if self.CH.Register(Component):
-                    self.MoveHighlight()
-                    PreviousCComp = Component.__class__
-            if not PreviousCComp is None and Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(PreviousCComp) or not Params.GUI.Behaviour.StopWireOnJoin or not Joins):
-                self.StartComponent(PreviousCComp)
+            if len(self.TmpComponents) != 1:
+                raise Exception(f"{len(self.TmpComponents)} component(s) currently in memory for BuildMode")
+            Component = self.TmpComponents.pop()
+            if self.CH.Register(Component):
+                self.MoveHighlight()
+                if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(Component) or (not Params.GUI.Behaviour.StopWireOnJoin) or not Joins):
+                    self.StartComponent(Component.__class__)
+                else:
+                    self.Modes.Default()
+                    self.Draw()
             else:
-                self.Modes.Default()
-                self.Draw()
+                self.TmpComponents.add(Component)
         elif self.Modes.Default:
             if self.CH.Wired(self.Cursor):
                 self.StartComponent(self.Library.Wire)
@@ -219,6 +221,7 @@ class GUI:
                 self.TmpComponents.update(self.Highlighted.Select(True))
             else:
                 self.TmpComponents.difference_update(self.Highlighted.Select(False))
+            self.TmpComponents.discard(None)
             self.DisplayFigure.canvas.draw()
 
     def Rotate(self, var):
