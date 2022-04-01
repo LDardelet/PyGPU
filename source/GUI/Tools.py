@@ -1,6 +1,7 @@
 import tkinter as Tk
 
 import matplotlib
+from functools import cached_property
 from Console import ConsoleWidget, Log
 from Values import Colors, Params
 
@@ -16,27 +17,25 @@ class ModeC:
     Color = None
     def __init__(self):
         self.Key = Params.GUI.Controls.Modes.get(self.ID, None)
-        self.Name = Params.GUI.ModesNames[self.ID]
         self.Color = Colors.GUI.Modes[self.ID]
         if self.Current is None:
             ModeC.Current = self
     def __call__(self, func = None, Advertise = False): # Both a call and a wrapper
         if not func is None:
             def Wrap(*args, **kwargs):
-                if not bool(self):
+                if not bool(self): # Wrapper only changes if necessary
                     self()
                 func(*args, **kwargs)
             return Wrap
         
+        if Advertise:
+            Log(f"Mode {self.Name}")
         if self.Current == self:
             self.__class__.ReloadProps(self.GUI) # This writing allows to make XProps functions like GUI class methods
             return
-        if Advertise:
-            Log(f"Mode {self.Name}")
         self.Current.__class__.LeaveProps(self.GUI)
-        ModeC.Current = self
-        self.__class__.SetProps(self.GUI)
-        self.GUI.ClearTmpComponents() # If mode changes, we assume that the current component MUST be cleared
+        Prev, ModeC.Current = self.Current.__class__, self
+        self.__class__.SetProps(self.GUI, Prev)
         self.GUI.Plots['Cursor'].set_color(self.Color)
         if Params.GUI.View.CursorLinesWidth:
             self.GUI.Plots['HCursor'].set_color(self.Color)
@@ -44,7 +43,7 @@ class ModeC:
         self.GUI.DisplayFigure.canvas.draw()
     def __bool__(self):
         return self.Current == self
-    def SetProps(self):
+    def SetProps(self, From):
         pass
     def LeaveProps(self):
         pass
@@ -53,10 +52,15 @@ class ModeC:
     @property
     def IsActive(self):
         return self.Current == self
+    @cached_property
+    def Name(self):
+        return self.__class__.__name__.split('ModeC')[0]
 
 class DefaultModeC(ModeC):
     ID = 0
-    def SetProps(self):
+    def SetProps(self, From):
+        if not From == ConsoleModeC:
+            self.ClearTmpComponents()
         self.CheckConnexionToggle()
     def LeaveProps(self):
         self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.DISABLED)
@@ -65,7 +69,7 @@ class DefaultModeC(ModeC):
         self.DisplayFigure.canvas.draw()
 class ConsoleModeC(ModeC):
     ID = 1
-    def SetProps(self):
+    def SetProps(self, From):
         self.MainFrame.Console.ConsoleInstance.text.see(Tk.END)
         if self.MainWindow.focus_get() != self.MainFrame.Console.ConsoleInstance.text:
             self.MainFrame.Console.ConsoleInstance.text.focus_set()
@@ -73,19 +77,31 @@ class ConsoleModeC(ModeC):
         self.MainWindow.focus_set()
 class BuildModeC(ModeC):
     ID = 2
-    def SetProps(self):
+    def SetProps(self, From):
+        self.ClearTmpComponents()
         self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.HiddenAlpha)
     def LeaveProps(self):
         self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.DefaultAlpha)
         self.ColorLibComponent(None)
     def ReloadProps(self):
         self.ClearTmpComponents()
+class DeleteModeC(ModeC):
+    ID = 3
+    def SetProps(self, From):
+        if From == BuildModeC:
+            self.ClearTmpComponents()
+        print(From)
+        self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.DISABLED)
+        self.DeleteSelect()
+    def ReloadProps(self):
+        self.DeleteConfirm()
 class ModesDict:
     Default = DefaultModeC()
     Console = ConsoleModeC()
     Build   = BuildModeC()
+    Delete  = DeleteModeC()
     def __init__(self):
-        self.List = (self.Default, self.Console, self.Build)
+        self.List = (self.Default, self.Console, self.Build, self.Delete)
     @property
     def Current(self):
         return ModeC.Current

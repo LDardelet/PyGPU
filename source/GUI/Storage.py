@@ -120,13 +120,15 @@ class StorageItem(metaclass = Meta):
             return (BUILDIN, Value)
 
     def Unpack(self, Type, Value, IDsToDicts, Unpacked, NewItem = False, LogTab = 0, KeyName = ''):
+        IterableTab = 1
+        NewObjectTab = 2
         if NewItem:
             ID = Type
             Unpacked[ID] = self
             self._Modified = False
             #MissingAttributes = set(self._SA)
             for Key, Data in Value.items():
-                setattr(self, Key, self.Unpack(*Data, IDsToDicts, Unpacked, False, LogTab+1, Key))
+                setattr(self, Key, self.Unpack(*Data, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key))
             #    if Key not in self._SA:
             #        Log(f"Loaded wrong attribute : {Key}", LogTab)
             #    else:
@@ -147,7 +149,6 @@ class StorageItem(metaclass = Meta):
                 return Unpacked[ID]
             else:
                 Value = IDsToDicts[ID]
-                print(Value)
                 LibRef = Value.pop('LibRef')[1]
                 Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking new object {ID} from LibRef {LibRef}", LogTab)
                 StorageItem.Library[LibRef](UnpackData = (ID, Value, IDsToDicts, Unpacked, True, LogTab))
@@ -155,13 +156,13 @@ class StorageItem(metaclass = Meta):
                 #Unpacked[ID].Unpack(DICT, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab)
                 return Unpacked[ID]
         elif Type == DICT:
-            return {VKey:self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+1, VKey) for VKey, VValue in Value.items()}
+            return {VKey:self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+IterableTab, VKey) for VKey, VValue in Value.items()}
         elif Type == TUPLE:
-            return tuple([self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+1) for VValue in Value])
+            return tuple([self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+IterableTab) for VValue in Value])
         elif Type == LIST:
-            return [self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+1) for VValue in Value]
+            return [self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+IterableTab) for VValue in Value]
         elif Type == SET:
-            return set([self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+1) for VValue in Value])
+            return set([self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+IterableTab) for VValue in Value])
         elif Type == ARRAY:
             #return np.array([self.Unpack(*VValue, IDsToDicts, Unpacked, LogTab+1) for VValue in Value])
             return Value
@@ -171,7 +172,7 @@ class StorageItem(metaclass = Meta):
         else:
             raise ValueError(bool(Key)*f"{Key}: " + f"Type {Type} saved for value {Value}")
 
-def Log(data, LogTab = 0, Tab = 4):
+def Log(data, LogTab = 0, Tab = 2):
     print(LogTab*Tab*' '+data)
 
 class EntryPoint(StorageItem):
@@ -193,7 +194,10 @@ class EntryPoint(StorageItem):
         StoredData = self.Unpack(DICT, D, IDsToDicts, Unpacked, NewItem = False)
         for ID, Object in Unpacked.items():
             print(f"Starting object {ID}: {Object}")
-            Object.Start()
+            try:
+                Object.Start()
+            except:
+                print("   Failed")
         return StoredData
 
 def Modifies(func):

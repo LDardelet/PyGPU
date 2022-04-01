@@ -92,21 +92,23 @@ class ComponentBase(StorageItem):
             Plot.set_markersize(self.DefaultMarkersize*Factor)
 
     def Fix(self):
+        if self.State.Fixed:
+            return set()
         self.State = States.Fixed
         self.UpdateStyle()
-    def Select(self, var):
-        if var:
-            if self.State.Selected:
-                return {None}
-            self.State = States.Selected
-            self.UpdateStyle()
-            return {self}
-        else:
-            if not self.State.Selected:
-                return {None}
-            self.State = States.Fixed
-            self.UpdateStyle()
-            return {self}
+        return {self}
+    def Select(self):
+        if self.State.Selected:
+            return set()
+        self.State = States.Selected
+        self.UpdateStyle()
+        return {self}
+    def StartRemoving(self):
+        if self.State.Removing:
+            return set()
+        self.State = States.Removing
+        self.UpdateStyle()
+        return {self}
 
     def LinkedTo(self, Component):
         return Component in self.Links
@@ -212,7 +214,7 @@ class ComponentBase(StorageItem):
         if self.State.Building:
             self.destroy()
         elif self.State.Selected or self.State.Removing:
-            self.Select(False)
+            self.Fix()
 
     def destroy(self):
         for plot in self.Plots:
@@ -379,11 +381,18 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
         super().Highlight(var)
         for Pin in self.Children:
             Pin.Highlight(var)
-    def Select(self, var):
-        Switched = super().Select(var)
+    def Fix(self):
         for Pin in self.Children:
-            Switched.update(Pin.Select(var))
-        return Switched
+            Pin.Fix()
+        return super().Fix()
+    def Select(self):
+        for Pin in self.Children:
+            Pin.Select() 
+        return super().Select()
+    def StartRemoving(self):
+        for Pin in self.Children:
+            Pin.StartRemoving()
+        return super().StartRemoving()
 
     @property
     def AdvertisedLocations(self):
@@ -665,6 +674,18 @@ class ConnexionC(ComponentBase):
     @property
     def CanBeRemoved(self):
         return (self.NWires == 2 * len(self.IDs))
+    @property
+    def ShouldBeRemoved(self):
+        IDs = self.IDs
+        if len(IDs) == 0: # If nothing is left
+            return True
+        if len(IDs) >= 2: # If several components are here, this connexion still makes sense
+            return False
+        if self.NWires == 2: # One ID, 2 wires -> Onto a single wire, must auto remove. Might be an issue if we set mires middle point as a default connexion
+            return True
+        # Some situations may be unchecked here. Possibly add check self.Location in set(self.Links).pop().AdvertisedConnexions
+        return False
+        
     @property
     def AdvertisedLocations(self):
         return np.array([[self.Location[0], self.Location[1], -1]])

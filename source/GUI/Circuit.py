@@ -1,6 +1,6 @@
 import numpy as np
 
-import Components
+import Components as ComponentsModule
 from Values import Colors, Params, Levels
 from Console import Log, LogSuccess, LogWarning, LogError
 import DefaultLibrary
@@ -11,6 +11,7 @@ class ComponentsHandlerC(StorageItem):
     def __init__(self):
         self.StoredAttribute('MaxID', 0)
         self.StoredAttribute('Components', {})
+        self.StoredAttribute('Groups', {})
         self.StoredAttribute('Casings', {})
         self.Start()
 
@@ -72,7 +73,6 @@ class ComponentsHandlerC(StorageItem):
 
         for Child in NewComponent.Children:
             self.SetComponent(Child)
-            Child.Fix()
         self.SetComponent(NewComponent)
         NewComponent.Fix()
 
@@ -81,10 +81,14 @@ class ComponentsHandlerC(StorageItem):
 
     @Modifies
     @Building
-    def Remove(self, Component):
-        for Child in Component.Children:
-            del self.Components[Child.ID]
-        del self.Components[Component.ID]
+    def Remove(self, Components):
+        print(f"Attempting to remove {Components}")
+        self.UnsetComponents(Components)
+        for Component in Components:
+            for Child in Component.Children:
+                del self.Components[Child.ID]
+            del self.Components[Component.ID]
+            Component.destroy()
 
     def CheckRoom(self, NewComponent):
         NewLocations = NewComponent.AdvertisedLocations
@@ -97,22 +101,45 @@ class ComponentsHandlerC(StorageItem):
         Component.ID = self.MaxID
 
         self.Components[Component.ID] = Component
-        if isinstance(Component, Components.CasedComponentC):
+        if isinstance(Component, ComponentsModule.CasedComponentC):
             self.Casings[Component.ID] = Component
         self.RegisterMap(Component)
-        if not isinstance(Component, Components.CasedComponentC) or Params.Board.CasingsOwnPinsBases:
+        if not isinstance(Component, ComponentsModule.CasedComponentC) or Params.Board.CasingsOwnPinsBases:
             GroupC(Component)
         else:
             CasingGroupC(Component)
         self.LinkToOthers(Component)
-    def UnsetComponent(self, Component):
-        for LinkedComponent in set(Component.Links):
-            self.Unlink(Component, LinkedComponent)
-        self.RegisterMap(Component, Add=False)
-        Component.Group.Split({Component})
+    def UnsetComponents(self, InputComponents):
+        Components = set()
+        InputComponents = set(InputComponents)
+        ConsideredComponents = set(InputComponents)
+        while InputComponents:
+            Component = InputComponents.pop()
+            ConsideredComponents.add(Component)
+            for Child in Component.Children:
+                if Child not in ConsideredComponents:
+                    InputComponents.add(Child)
+        AffectedConnexions = self.GetConnexions(Components)
+        for Component in Components:
+            for LinkedComponent in set(Component.Links):
+                self.Unlink(Component, LinkedComponent)
+            self.UnregisterMap(Component)
+        while Components:
+            print(f"Components remaining: {Components}")
+            Component = Components.pop()
+            Group = Component.Group
+            if not Group is None: # Happens if the component was the only one of its group, typically
+                GroupComponents = {Component}.union(Components.intersection(Group.Components))
+                Components.difference_update(GroupComponents)
+                print(f"Splitting {Group} with {GroupComponents}")
+                Group.Split(GroupComponents)
+        for Connexion in AffectedConnexions:
+            Connexion.UpdateColumn(self.Map[Connexion.Location[0], Connexion.Location[1], :])
+            if Connexion.ShouldBeRemoved:
+                self.RemoveConnexion(Connexion)
 
     def LinkToOthers(self, NewComponent):
-        if isinstance(NewComponent, Components.ConnexionC):
+        if isinstance(NewComponent, ComponentsModule.ConnexionC):
             for ID in NewComponent.Column:
                 if ID:
                     self.Link(self.Components[ID], NewComponent)
@@ -148,32 +175,48 @@ class ComponentsHandlerC(StorageItem):
         C1.Links.remove(C2)
         C2.Links.remove(C1)
 
-    def RegisterMap(self, Component, Add=True):
+    def RegisterMap(self, Component):
         for x, y, theta in Component.AdvertisedLocations:
-            self.Map[x,y,theta] = Component.ID*Add
+            self.Map[x,y,theta] = Component.ID
+    def UnregisterMap(self, Component):
+        for x, y, theta in Component.AdvertisedLocations:
+            self.Map[x,y,theta] = 0
 
+    @Modifies
     @Building
     def ToggleConnexion(self, Location):
         if self.Map[Location[0], Location[1],-1]:
-            if isinstance(self.Components[self.Map[Location[0], Location[1],-1]], Components.ConnexionC): # Second check for pin bases
+            if isinstance(self.Components[self.Map[Location[0], Location[1],-1]], ComponentsModule.ConnexionC): # Second check for pin bases
                 self.RemoveConnexion(Location)
         else:
             self.AddConnexion(Location)
+
     def AddConnexion(self, Location):
-        NewConnexion = Components.ConnexionC(Location, self.Map[Location[0], Location[1],:])
+        NewConnexion = ComponentsModule.ConnexionC(Location, self.Map[Location[0], Location[1],:])
         self.SetComponent(NewConnexion)
     def RemoveConnexion(self, Location):
         Connexion = self.Components[self.Map[Location[0], Location[1],-1]]
         if not Connexion.CanBeRemoved:
             LogWarning("Attempting to removed a fixed connexion")
             return
-        self.UnsetComponent(Connexion)
+        self.UnsetComponents({Connexion})
         Connexion.destroy()
+        del self.Components[Connexion.ID]
+
+    def GetConnexions(self, Components):
+        Connexions = set()
+        for Component in Components:
+            if isinstance(Component, ComponentsModule.ConnexionC):
+                continue
+            for LinkedComponent in Component.Links:
+                if isinstance(LinkedComponent, ComponentsModule.ConnexionC):
+                    Connexions.add(LinkedComponent)
+        return Connexions
 
     def CursorGroups(self, Location):
         return list({self.Components[ID].Group for ID in self.Map[Location[0], Location[1],:-1] if ID})
     def CursorComponents(self, Location):  # We remove ComponentPin from single component highlight as nothing can be done with them alone
-        return list({self.Components[ID] for ID in self.Map[Location[0], Location[1],:-1] if (ID and not isinstance(self.Components[ID], Components.ComponentPinC))})
+        return list({self.Components[ID] for ID in self.Map[Location[0], Location[1],:-1] if (ID and not isinstance(self.Components[ID], ComponentsModule.ComponentPinC))})
     def CursorCasings(self, Location):
         return list({Component for Component in self.Casings.values() if Location in Component})
     def CursorConnected(self, Location):
@@ -184,7 +227,7 @@ class ComponentsHandlerC(StorageItem):
         else:
             ID = self.Map[Location[0], Location[1], -1]
             C = self.Components[self.Map[Location[0], Location[1], -1]]
-            if not isinstance(C, Components.ConnexionC):
+            if not isinstance(C, ComponentsModule.ConnexionC):
                 return False
             return C.CanBeRemoved
 
@@ -213,7 +256,7 @@ class ComponentsHandlerC(StorageItem):
 
     def Wired(self, Location):
         for ID in self.Map[Location[0], Location[1], :8]:
-            if ID and (isinstance(self.Components[ID], Components.WireC) or isinstance(self.Components[ID], Components.ComponentPinC)):
+            if ID and (isinstance(self.Components[ID], ComponentsModule.WireC) or isinstance(self.Components[ID], ComponentsModule.ComponentPinC)):
                 return True
         return False
     def HasItem(self, Location):
@@ -241,6 +284,7 @@ class GroupC(StorageItem):
         self.StoredAttribute('Level', Params.Board.GroupDefaultLevel)
         self.StoredAttribute('SetBy', None)
         self.AddComponent(Component)
+        self.Handler.Groups[self.ID] = self
 
     @property
     def ID(self):
@@ -261,7 +305,13 @@ class GroupC(StorageItem):
                 self.ResetDefaultLevel()
         return Group.ID
 
-    def Split(self, RemovedComponents): # TODO : add useless connexions to this set, either by checking their column, or by looking at their links. probably need both, hence the need to switch links to class instances and not IDs
+    def Split(self, RemovedComponents, Log = False): 
+        if not Log:
+            def Log(txt):
+                pass
+        else:
+            def Log(txt):
+                print(txt)
         self.Highlight(False)
         for Component in RemovedComponents:
             if Component.Group != self:
@@ -271,56 +321,60 @@ class GroupC(StorageItem):
         while RemainingComponents:
             ComponentsSet = set()
             StartComponent = RemainingComponents.pop()
-            print(f"Starting with {StartComponent}")
+            Log(f"Starting with {StartComponent}")
             FoundComponents = {StartComponent}
             while FoundComponents:
                 FoundComponent = FoundComponents.pop()
                 ComponentsSet.add(FoundComponent)
-                print(f"  Studying {FoundComponent}")
+                Log(f"  Studying {FoundComponent}")
                 for ConsideredComponent in FoundComponent.Links:
-                    print(f"      Considering {ConsideredComponent}")
+                    Log(f"      Considering {ConsideredComponent}")
                     if ConsideredComponent in RemainingComponents:
                         FoundComponents.add(ConsideredComponent)
                         RemainingComponents.remove(ConsideredComponent)
-                        print("        Added")
+                        Log("        Added")
             FoundValidComponent = False
             for Component in ComponentsSet: # We check that at least one component of this group is not a connexion. Groups should not be defined by connexions only
-                if not isinstance(Component, Components.ConnexionC):
+                if not isinstance(Component, ComponentsModule.ConnexionC):
                     FoundValidComponent = True
                     break
             if not self.InitialComponent in ComponentsSet:
                 NewGroup = self.__class__(ComponentsSet.pop()) # We take any of the components of this new set as initial component
-                for Component in ComponentsSet:
+                for Component in ComponentsSet: # Level setting is taken care of in here
                     NewGroup.AddComponent(Component)
-                if self.SetBy in NewGroup:
-                    NewGroup.SetLevel(self.Level, self.SetBy)
-                    self.ResetDefaultLevel()
-                else:
-                    NewGroup.ResetDefaultLevel()
+                if NewGroup.SetBy is None: # Incase SetBy existed for self group but was not encountered here, we must ensure that the default level here was implemented 
+                    for Component in NewGroup.Components:
+                        Component.UpdateStyle()
             else:
                 NewGroup = self
-            print(f"Final set for group {NewGroup}: {NewGroup.Components}")
+            Log(f"Final set for {NewGroup}: {NewGroup.Components}")
             if not FoundValidComponent:
                 LogWarning(f"{NewGroup} contains only {len(NewGroup.Connexions)} connexions")
 
-    def AddComponent(self, NewComponent):
+    def AddComponent(self, NewComponent, AutoSet = True):
+        Level = None
         if not NewComponent.Group is None:
-            NewComponent.Group.Components.remove(NewComponent)
+            if AutoSet and NewComponent.Group.SetBy == NewComponent:
+                Level = NewComponent.Group.Level
+            NewComponent.Group.RemoveComponent(NewComponent)
         NewComponent.Group = self
         self.Components.add(NewComponent)
-        if isinstance(NewComponent, Components.ConnexionC):
+        if isinstance(NewComponent, ComponentsModule.ConnexionC):
             self.Connexions.add(NewComponent)
-        if not isinstance(NewComponent, Components.ConnexionC) and not isinstance(NewComponent, Components.ComponentPinC):
+        if not isinstance(NewComponent, ComponentsModule.ConnexionC) and not isinstance(NewComponent, ComponentsModule.ComponentPinC):
             self.Highlightables.add(NewComponent)
+        if not Level is None:
+            self.SetLevel(Level, NewComponent)
 
-    def RemoveComponent(self, Component):
+    def RemoveComponent(self, Component, AutoSet = True, AutoRemove = True):
         Component.Group = None
         self.Components.remove(Component)
         self.Connexions.discard(Component)
         self.Highlightables.discard(Component)
-        if self.SetBy == Component:
+        if AutoSet and self.SetBy == Component:
             self.ResetDefaultLevel()
-        return bool(self.Components)
+        if not self.Components and AutoRemove:
+            del self.Handler.Groups[self.ID]
 
     def ResetDefaultLevel(self):
         self.SetLevel(Params.Board.GroupDefaultLevel, None)
@@ -351,11 +405,29 @@ class GroupC(StorageItem):
             if not Component.Selected:
                 return False
         return True
-    def Select(self, var):
+    @property
+    def Removing(self): # We assume that a group is only being removed if the entire group is being removed
+        for Component in self.Components:
+            if not Component.Removing:
+                return False
+        return True
+    def Fix(self):
         Switched = set()
         for Component in self.Components:
-            if type(Component) != Components.ComponentPinC:
-                Switched.update(Component.Select(var))
+            if type(Component) != ComponentsModule.ComponentPinC:
+                Switched.update(Component.Fix())
+        return Switched
+    def Select(self):
+        Switched = set()
+        for Component in self.Components:
+            if type(Component) != ComponentsModule.ComponentPinC:
+                Switched.update(Component.Select())
+        return Switched
+    def StartRemoving(self):
+        Switched = set()
+        for Component in self.Components:
+            if type(Component) != ComponentsModule.ComponentPinC:
+                Switched.update(Component.StartRemoving())
         return Switched
     def Clear(self):
         for Component in self.Components:
@@ -395,7 +467,7 @@ class BookC:
                 LogWarning(f"Component name {CompName} already exists in this book")
                 continue
             self.Components.append(CompName)
-            if isinstance(CompData, type(Components.ComponentBase)):
+            if isinstance(CompData, type(ComponentsModule.ComponentBase)):
                 self.__dict__[CompName] = CompData
                 CompData.Book = self
             else:
@@ -414,7 +486,7 @@ class BookC:
             LogWarning(f"Unable to load component {Name} from its definition")
             return
         self.__dict__[CompName] = type(CompName, 
-                                   (Components.CasedComponentC, ), 
+                                   (ComponentsModule.CasedComponentC, ), 
                                    {
                                        #'__init__': Components.CasedComponentC.__init__,
                                        'CName': CompName,
@@ -429,25 +501,25 @@ class BookC:
                                        'Symbol':Symbol,
                                    })
 class CLibrary:
-    ComponentBase = Components.ComponentBase # Used to transmit Ax reference
+    ComponentBase = ComponentsModule.ComponentBase # Used to transmit Ax reference
     def __init__(self):
         StorageItem.Library = self
 
         self.Books = []
         self.Special = {}
         self.AddBook(BookC('Standard', DefaultLibrary.Definitions))
-        self.Wire = Components.WireC
+        self.Wire = ComponentsModule.WireC
 
-        self.AddSpecialStorageClass(Components.ConnexionC)
-        self.AddSpecialStorageClass(Components.ComponentPinC)
-        self.AddSpecialStorageClass(Components.InputPinC)
-        self.AddSpecialStorageClass(Components.OutputPinC)
+        self.AddSpecialStorageClass(ComponentsModule.ConnexionC)
+        self.AddSpecialStorageClass(ComponentsModule.ComponentPinC)
+        self.AddSpecialStorageClass(ComponentsModule.InputPinC)
+        self.AddSpecialStorageClass(ComponentsModule.OutputPinC)
         self.AddSpecialStorageClass(GroupC)
         self.AddSpecialStorageClass(CasingGroupC)
         self.AddSpecialStorageClass(ComponentsHandlerC)
 
-        self.AddSpecialStorageClass(Components.StatesC)
-        for State in Components.States.States:
+        self.AddSpecialStorageClass(ComponentsModule.StatesC)
+        for State in ComponentsModule.States.States:
             self.AddSpecialStorageClass(State.__class__)
 
     def AddBook(self, Book):
@@ -455,7 +527,7 @@ class CLibrary:
         self.Books.append(Book.Name)
 
     def IsWire(self, C): # Checks if class or class instance
-        return C == Components.WireC or isinstance(C, Components.WireC)
+        return C == ComponentsModule.WireC or isinstance(C, ComponentsModule.WireC)
     def IsGroup(self, C):
         return isinstance(C, GroupC)
 

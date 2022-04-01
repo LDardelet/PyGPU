@@ -31,6 +31,7 @@ class Colors:
             0:C.white,  # Default
             1:C.white,  # Console
             2:C.yellow, # Building
+            3:C.red, # Building
         }
     class Component:
         Modes = {
@@ -58,10 +59,6 @@ class Params:
         Name = 'Logic Gates Simulator'
         DataFolder = '~/Documents/PyGPUFiles/'
         BoardSaveSubfolder = 'Projects/'
-        ModesNames = {0:"Default",
-                      1: "Console",
-                      2: "Build",
-        }
         class Library:
             Columns = 2
             ComponentHeight = 2
@@ -97,7 +94,8 @@ class Params:
                 "down":np.array([0,-1])
             }
             Modes = {0:"escape",
-                    1:'twosuperior'
+                     1:'twosuperior',
+                     3:'d',
             }
             Components = {'and': 'a',
                           'or' : 'o',
@@ -108,7 +106,7 @@ class Params:
             }
             Close = 'f4'
             Connect = 'c'
-            Delete = 'd'
+#            Delete = 'd'
             Move = 'm'
             Restart = 'f5'
             Rotate = 'r'
@@ -124,6 +122,7 @@ class Params:
             AutoContinueComponent = True
             StopWireOnJoin = True
             DefaultWireBuildMode = 1
+            AskDeleteConfirmation = False
 
 class PinDict:
     W,E,N,S = 'WENS'

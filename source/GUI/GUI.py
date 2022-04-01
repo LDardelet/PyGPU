@@ -214,15 +214,36 @@ class GUI:
             self.NextHighlight()
             self.DisplayFigure.canvas.draw()
 
-    @Modes.Default
     def Select(self):
-        if not self.Highlighted is None:
+        if self.Highlighted is None:
+            return
+        if self.Modes.Build:
+            self.Modes.Default()
+        if self.Modes.Default:
             if not self.Highlighted.Selected:
-                self.TmpComponents.update(self.Highlighted.Select(True))
+                self.TmpComponents.update(self.Highlighted.Select())
             else:
-                self.TmpComponents.difference_update(self.Highlighted.Select(False))
-            self.TmpComponents.discard(None)
+                self.TmpComponents.difference_update(self.Highlighted.Fix())
+        elif self.Modes.Delete:
+            if not self.Highlighted.Removing:
+                self.TmpComponents.update(self.Highlighted.StartRemoving())
+            else:
+                self.TmpComponents.difference_update(self.Highlighted.Fix())
+        self.DisplayFigure.canvas.draw()
+
+
+    def DeleteSelect(self): # Called when starting delete mode
+        for Component in self.TmpComponents:
+            Component.StartRemoving()
+        if not self.Highlighted is None:
+            self.Select()
+    def DeleteConfirm(self): # Called when removing again, actual removing action trigger
+        if not self.Highlighted is None and not self.Highlighted.Removing:
+            return self.Select()
+        if not Params.GUI.Behaviour.AskDeleteConfirmation or self.AskConfirm(f"Do you confirm the deletion of {len(self.TmpComponents)} components ?"):
+            self.CH.Remove(self.TmpComponents)
             self.DisplayFigure.canvas.draw()
+            self.TmpComponents = set()
 
     def Rotate(self, var):
         self.Rotation = (self.Rotation + 1) & 0b11
@@ -301,7 +322,7 @@ class GUI:
 
         self.AddControlKey(Controls.Connect, lambda key, mod: self.ToggleConnexion())
         self.AddControlKey(Controls.Close,   lambda key, mod: self.Close(0))
-        self.AddControlKey(Controls.Delete,  lambda key, mod: self.Delete())
+#        self.AddControlKey(Controls.Delete,  lambda key, mod: self.Delete())
         self.AddControlKey(Controls.Move,    lambda key, mod: self.Move())
         self.AddControlKey(Controls.Restart, lambda key, mod: self.Close(1))
         self.AddControlKey(Controls.Rotate,  lambda key, mod: self.Rotate(mod))
@@ -332,7 +353,7 @@ class GUI:
         if not Key in self.KeysFunctionsDict:
             self.KeysFunctionsDict[Key] = {}
         if Mod in self.KeysFunctionsDict[Key]:
-            raise ValueError(f"Used key : {('Ctrl', 'Shift')[Mod]}+{Key}")
+            raise ValueError(f"Used key : {bool(Mod)*(('', 'Ctrl', 'Shift')[Mod]+'+')}{Key}")
         self.KeysFunctionsDict[Key][Mod] = Callback
 
     def LoadMenu(self):
