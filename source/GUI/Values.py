@@ -109,6 +109,7 @@ class Params:
 #            Delete = 'd'
             Move = 'm'
             Restart = 'f5'
+            Reload = 'f6'
             Rotate = 'r'
             Select = 's'
             Set = 'space'

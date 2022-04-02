@@ -1,7 +1,7 @@
 import tkinter as Tk
 from tkinter import ttk
 from PIL import Image
-import os
+import os, sys
 import sys
 import numpy as np
 
@@ -19,7 +19,7 @@ matplotlib.use("TkAgg")
 
 class GUI:
     Modes = ModesDict() # Here as we need mode decorator
-    def __init__(self):
+    def __init__(self, Args):
         self.MainWindow = Tk.Tk()
 
         self.LoadGUIModes()
@@ -29,9 +29,10 @@ class GUI:
         self.LoadGUI()
 
         self.Circuit = Circuit
-
-        self.LoadBoardData()
-
+        if len(Args) >=1:
+            self.LoadBoardData(Args[1])
+        else:
+            self.LoadBoardData()
 
         self.MainWindow.mainloop()
 
@@ -233,10 +234,11 @@ class GUI:
 
 
     def DeleteSelect(self): # Called when starting delete mode
-        for Component in self.TmpComponents:
-            Component.StartRemoving()
         if not self.Highlighted is None:
             self.Select()
+        for Component in self.TmpComponents:
+            Component.StartRemoving()
+        self.DisplayFigure.canvas.draw()
     def DeleteConfirm(self): # Called when removing again, actual removing action trigger
         if not self.Highlighted is None and not self.Highlighted.Removing:
             return self.Select()
@@ -244,6 +246,7 @@ class GUI:
             self.CH.Remove(self.TmpComponents)
             self.DisplayFigure.canvas.draw()
             self.TmpComponents = set()
+            self.Modes.Default()
 
     def Rotate(self, var):
         self.Rotation = (self.Rotation + 1) & 0b11
@@ -325,6 +328,7 @@ class GUI:
 #        self.AddControlKey(Controls.Delete,  lambda key, mod: self.Delete())
         self.AddControlKey(Controls.Move,    lambda key, mod: self.Move())
         self.AddControlKey(Controls.Restart, lambda key, mod: self.Close(1))
+        self.AddControlKey(Controls.Reload,  lambda key, mod: self.Close(2))
         self.AddControlKey(Controls.Rotate,  lambda key, mod: self.Rotate(mod))
         self.AddControlKey(Controls.Select,  lambda key, mod: self.Select())
         self.AddControlKey(Controls.Set,     lambda key, mod: self.Set())
@@ -505,15 +509,15 @@ class GUI:
         if not self.CurrentCompButton is None:
             self.CurrentCompButton.configure(background = Colors.GUI.Widget.pressed)
 
-    def Close(self, Restart = False):
+    def Close(self, Restart = 0):
         self.MainWindow.quit()
         self.Restart = Restart
         #self.MainWindow.destroy()
 
 if __name__ == '__main__':
-    G = GUI()
+    Args = sys.argv
+    print(Args)
+    G = GUI(Args)
     if G.Restart:
         print("Restarting")
-        sys.exit(5)
-    else:
-        sys.exit(0)
+    sys.exit([0, 5, 6][G.Restart])

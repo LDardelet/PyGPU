@@ -167,7 +167,7 @@ class StorageItem(metaclass = Meta):
             #return np.array([self.Unpack(*VValue, IDsToDicts, Unpacked, LogTab+1) for VValue in Value])
             return Value
         elif Type == BUILDIN:
-            Log(bool(KeyName)*f"{KeyName}: " + f"Unpacked {type(Value)} value {Value}", LogTab)
+            #Log(bool(KeyName)*f"{KeyName}: " + f"Unpacked {type(Value)} value {Value}", LogTab)
             return Value
         else:
             raise ValueError(bool(Key)*f"{Key}: " + f"Type {Type} saved for value {Value}")

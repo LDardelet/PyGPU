@@ -71,8 +71,9 @@ class ComponentsHandlerC(StorageItem):
                 LogWarning(f"Unable to register the new component, due to child {Child} position conflict")
                 return False
 
-        for Child in NewComponent.Children:
-            self.SetComponent(Child)
+        if NewComponent.ID is None: # Placed here to avoid resetting it
+            self.Remember(NewComponent)
+
         self.SetComponent(NewComponent)
         NewComponent.Fix()
 
@@ -85,9 +86,7 @@ class ComponentsHandlerC(StorageItem):
         print(f"Attempting to remove {Components}")
         self.UnsetComponents(Components)
         for Component in Components:
-            for Child in Component.Children:
-                del self.Components[Child.ID]
-            del self.Components[Component.ID]
+            self.Forget(Component)
             Component.destroy()
 
     def CheckRoom(self, NewComponent):
@@ -97,12 +96,9 @@ class ComponentsHandlerC(StorageItem):
             #LogWarning(f"Unable to register the new component, due to positions {NewLocations[np.where(IDs != 0), :].tolist()}")
 
     def SetComponent(self, Component): # Sets the ID of a component and stores it. Handles links through LinkToOthers.
-        self.MaxID += 1
-        Component.ID = self.MaxID
+        for Child in Component.Children:
+            self.SetComponent(Child)
 
-        self.Components[Component.ID] = Component
-        if isinstance(Component, ComponentsModule.CasedComponentC):
-            self.Casings[Component.ID] = Component
         self.RegisterMap(Component)
         if not isinstance(Component, ComponentsModule.CasedComponentC) or Params.Board.CasingsOwnPinsBases:
             GroupC(Component)
@@ -110,15 +106,15 @@ class ComponentsHandlerC(StorageItem):
             CasingGroupC(Component)
         self.LinkToOthers(Component)
     def UnsetComponents(self, InputComponents):
-        Components = set()
         InputComponents = set(InputComponents)
-        ConsideredComponents = set(InputComponents)
-        while InputComponents:
+        Components = set()
+        while InputComponents: # Incase of children nesting
             Component = InputComponents.pop()
-            ConsideredComponents.add(Component)
+            Components.add(Component)
             for Child in Component.Children:
-                if Child not in ConsideredComponents:
+                if Child not in Components:
                     InputComponents.add(Child)
+        
         AffectedConnexions = self.GetConnexions(Components)
         for Component in Components:
             for LinkedComponent in set(Component.Links):
@@ -137,6 +133,23 @@ class ComponentsHandlerC(StorageItem):
             Connexion.UpdateColumn(self.Map[Connexion.Location[0], Connexion.Location[1], :])
             if Connexion.ShouldBeRemoved:
                 self.RemoveConnexion(Connexion)
+
+    def Remember(self, Component):
+        for Child in Component.Children:
+            self.Remember(Child)
+        
+        self.MaxID += 1
+        Component.ID = self.MaxID
+        self.Components[Component.ID] = Component
+        if isinstance(Component, ComponentsModule.CasedComponentC):
+            self.Casings[Component.ID] = Component
+    def Forget(self, Component):
+        for Child in Component.Children:
+            self.Forget(Child)
+
+        del self.Components[Component.ID]
+        if isinstance(Component, ComponentsModule.CasedComponentC):
+            del self.Casings[Component.ID]
 
     def LinkToOthers(self, NewComponent):
         if isinstance(NewComponent, ComponentsModule.ConnexionC):
@@ -186,16 +199,17 @@ class ComponentsHandlerC(StorageItem):
     @Building
     def ToggleConnexion(self, Location):
         if self.Map[Location[0], Location[1],-1]:
-            if isinstance(self.Components[self.Map[Location[0], Location[1],-1]], ComponentsModule.ConnexionC): # Second check for pin bases
-                self.RemoveConnexion(Location)
+            Connexion = self.Components[self.Map[Location[0], Location[1],-1]]
+            if isinstance(Connexion, ComponentsModule.ConnexionC): # Second check for pin bases
+                self.RemoveConnexion(Connexion)
         else:
             self.AddConnexion(Location)
 
     def AddConnexion(self, Location):
         NewConnexion = ComponentsModule.ConnexionC(Location, self.Map[Location[0], Location[1],:])
+        self.Remember(NewConnexion)
         self.SetComponent(NewConnexion)
-    def RemoveConnexion(self, Location):
-        Connexion = self.Components[self.Map[Location[0], Location[1],-1]]
+    def RemoveConnexion(self, Connexion):
         if not Connexion.CanBeRemoved:
             LogWarning("Attempting to removed a fixed connexion")
             return
