@@ -29,7 +29,7 @@ class GUI:
         self.LoadGUI()
 
         self.Circuit = Circuit
-        if len(Args) >=1:
+        if len(Args) > 1:
             self.LoadBoardData(Args[1])
         else:
             self.LoadBoardData()
@@ -47,6 +47,7 @@ class GUI:
         self.PlotView()
         return True
 
+    @Modes.Default
     def SaveBoardData(self, SelectFilename = False):
         if self.FH.Filename is None or SelectFilename:
             Filename = Tk.filedialog.asksaveasfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')

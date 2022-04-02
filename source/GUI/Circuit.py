@@ -13,6 +13,7 @@ class ComponentsHandlerC(StorageItem):
         self.StoredAttribute('Components', {})
         self.StoredAttribute('Groups', {})
         self.StoredAttribute('Casings', {})
+        self.StoredAttribute('CasingGroup', CasingGroupC())
         self.Start()
 
     def Start(self):
@@ -103,7 +104,7 @@ class ComponentsHandlerC(StorageItem):
         if not isinstance(Component, ComponentsModule.CasedComponentC) or Params.Board.CasingsOwnPinsBases:
             GroupC(Component)
         else:
-            CasingGroupC(Component)
+            self.CasingGroup.AddComponent(Component)
         self.LinkToOthers(Component)
     def UnsetComponents(self, InputComponents):
         InputComponents = set(InputComponents)
@@ -121,13 +122,11 @@ class ComponentsHandlerC(StorageItem):
                 self.Unlink(Component, LinkedComponent)
             self.UnregisterMap(Component)
         while Components:
-            print(f"Components remaining: {Components}")
             Component = Components.pop()
             Group = Component.Group
             if not Group is None: # Happens if the component was the only one of its group, typically
                 GroupComponents = {Component}.union(Components.intersection(Group.Components))
                 Components.difference_update(GroupComponents)
-                print(f"Splitting {Group} with {GroupComponents}")
                 Group.Split(GroupComponents)
         for Connexion in AffectedConnexions:
             Connexion.UpdateColumn(self.Map[Connexion.Location[0], Connexion.Location[1], :])
@@ -295,8 +294,8 @@ class GroupC(StorageItem):
         self.StoredAttribute('Components', set())
         self.StoredAttribute('Connexions', set())
         self.StoredAttribute('Highlightables', set())
-        self.StoredAttribute('Level', Params.Board.GroupDefaultLevel)
-        self.StoredAttribute('SetBy', None)
+        self.StoredAttribute('Level', Levels.Undef)
+        self.StoredAttribute('SetBy', {})
         self.AddComponent(Component)
         self.Handler.Groups[self.ID] = self
 
@@ -307,17 +306,17 @@ class GroupC(StorageItem):
     def Merge(self, Group): 
         for Component in set(Group.Components):
             self.AddComponent(Component)
-        if self.IsSet:
-            if Group.IsSet:
-                self.DualSetWarning(Group.SetBy, 'Merge')
-            else:
-                self.SetLevel(self.Level, self.SetBy)
-        else:
-            if Group.IsSet:
-                self.SetLevel(Group.Level, Group.SetBy)
-            else:
-                self.ResetDefaultLevel()
         return Group.ID
+
+    @classmethod
+    def CreateGroupFrom(cls, ComponentsSet):
+        NewGroup = cls(ComponentsSet.pop()) # We take any of the components of this new set as initial component
+        for Component in ComponentsSet: # Level setting is taken care of in here
+            NewGroup.AddComponent(Component)
+        if not NewGroup.SetBy: # Incase SetBy existed for self group but was not encountered here, we must ensure that the default level here was implemented 
+            for Component in NewGroup.Components:
+                Component.UpdateStyle()
+        return NewGroup
 
     def Split(self, RemovedComponents, Log = False): 
         if not Log:
@@ -347,30 +346,29 @@ class GroupC(StorageItem):
                         FoundComponents.add(ConsideredComponent)
                         RemainingComponents.remove(ConsideredComponent)
                         Log("        Added")
+
             FoundValidComponent = False
             for Component in ComponentsSet: # We check that at least one component of this group is not a connexion. Groups should not be defined by connexions only
                 if not isinstance(Component, ComponentsModule.ConnexionC):
                     FoundValidComponent = True
                     break
             if not self.InitialComponent in ComponentsSet:
-                NewGroup = self.__class__(ComponentsSet.pop()) # We take any of the components of this new set as initial component
-                for Component in ComponentsSet: # Level setting is taken care of in here
-                    NewGroup.AddComponent(Component)
-                if NewGroup.SetBy is None: # Incase SetBy existed for self group but was not encountered here, we must ensure that the default level here was implemented 
-                    for Component in NewGroup.Components:
-                        Component.UpdateStyle()
+                Group = self.CreateGroupFrom(ComponentsSet)
             else:
-                NewGroup = self
-            Log(f"Final set for {NewGroup}: {NewGroup.Components}")
+                Group = self
+            Log(f"Final set for {Group}: {Group.Components}")
             if not FoundValidComponent:
-                LogWarning(f"{NewGroup} contains only {len(NewGroup.Connexions)} connexions")
+                LogWarning(f"{Group} contains only {len(Group.Connexions)} connexions")
 
     def AddComponent(self, NewComponent, AutoSet = True):
         Level = None
         if not NewComponent.Group is None:
-            if AutoSet and NewComponent.Group.SetBy == NewComponent:
-                Level = NewComponent.Group.Level
+            if AutoSet and NewComponent in NewComponent.Group.SetBy:
+                Level = NewComponent.Group.SetBy[NewComponent]
             NewComponent.Group.RemoveComponent(NewComponent)
+        else:
+            if self.SetBy: # principle check, should never happen, as each new component (.Group is None) is assigned a new Group at first (SetBy == {})
+                raise Exception("New component is assigned an existing group at first")
         NewComponent.Group = self
         self.Components.add(NewComponent)
         if isinstance(NewComponent, ComponentsModule.ConnexionC):
@@ -385,30 +383,37 @@ class GroupC(StorageItem):
         self.Components.remove(Component)
         self.Connexions.discard(Component)
         self.Highlightables.discard(Component)
-        if AutoSet and self.SetBy == Component:
-            self.ResetDefaultLevel()
+        if AutoSet and Component in self.SetBy:
+            del self.SetBy[Component]
+            if not self.SetBy:
+                self.SetLevel()
+            else:
+                PickedComponent = list(self.SetBy.keys())[0]
+                self.SetLevel(self.SetBy[PickedComponent], PickedComponent)
         if not self.Components and AutoRemove:
             del self.Handler.Groups[self.ID]
 
-    def ResetDefaultLevel(self):
-        self.SetLevel(Params.Board.GroupDefaultLevel, None)
-    def SetLevel(self, Level, Component):
-        if not self.SetBy is None and not Component is None and Component != self.SetBy:
-            self.DualSetWarning(Component, 'SetLevel')
-            return
-        self.SetBy = Component
-        self.Level = Level
-        for Component in self.Components:
-            Component.UpdateStyle()
-            if Component.TriggersParent:
-                self.Handler.UpdateRequest(Component.Parent)
-
-    def DualSetWarning(self, Component, funcStr = ''):
-        LogWarning(f"Group {self.ID} set by {Component} and {self.SetBy}" + bool(funcStr)*f" (@{funcStr})")
-
-    @property
-    def IsSet(self):
-        return not self.SetBy is None
+    def SetLevel(self, Level = None, Component = None):
+        print(Level, Component)
+        if Component != None:
+            self.SetBy[Component] = Level
+        if len(self.SetBy) == 1:
+            self.Level, Change = Level, Level != self.Level
+        elif len(self.SetBy) == 0:
+            self.UnsetWarning()
+            self.Level, Change = Levels.Undef, Level != self.Level
+        else:
+            self.MultipleSetWarning()
+            self.Level, Change = Levels.Multiple, Level != self.Level
+        if Change:
+            for Component in self.Components:
+                Component.UpdateStyle()
+                if Component.TriggersParent:
+                    self.Handler.UpdateRequest(Component.Parent)
+    def UnsetWarning(self):
+        LogWarning(f"Group {self.ID} not set anymore")
+    def MultipleSetWarning(self):
+        LogWarning(f"Group {self.ID} set by {', '.join([str(Component) for Component in self.SetBy])}")
 
     def Highlight(self, var):
         for Component in self.Highlightables:
@@ -451,7 +456,13 @@ class GroupC(StorageItem):
     def Color(self):
         return Colors.Component.Levels[self.Level]
     def __repr__(self):
-        return f"Group {self.ID} ({', '.join([Levels.Names[self.Level]]+['unset']*(self.SetBy is None))})"
+        if len(self.SetBy) == 0:
+            LevelStr = f"({Levels.Names[self.Level]}, unset)"
+        elif len(self.SetBy) == 1:
+            LevelStr = f"({Levels.Names[self.Level]}, {str(list(self.SetBy.keys())[0].ID)})"
+        else:
+            LevelStr = '(multiple sets)'
+        return f"Group {self.ID} {LevelStr}"
     def __len__(self): # We do not consider connexions as part of the length of a group
         return len(self.Components.difference(self.Connexions))
     def __contains__(self, Component):
@@ -461,13 +472,18 @@ class CasingGroupC(StorageItem):
     Level = Levels.Undef
     Color = Colors.Component.Levels[Level]
     LibRef = "CGC"
+    def __init__(self):
+        self.StoredAttribute("Components", set())
     def __repr__(self):
-        return ""
+        return "Casings"
     def AddComponent(self, Component):
         Component.Group = self
+        self.Components.add(Component)
     def RemoveComponent(self, Component):
-        pass
-CasingGroup = CasingGroupC()
+        self.Components.remove(Component)
+    def Split(self, Components):
+        for Component in Components:
+            self.RemoveComponent(Component)
 
 # Component template signature :
 # (InputPins, OutputPins, Callback, Schematics, ForceWidth, ForceHeight, DisplayPinNumbering, Symbol)

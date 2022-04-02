@@ -13,16 +13,17 @@ class FileHandlerC:
     def Load(self, Filename): # Only loads data from file to memory
         self.Filename = Filename
         with open(Filename, 'rb') as f:
-            self.LoadedData = EntryPoint().StartUnpack(pickle.load(f))
+            self.RawData = pickle.load(f)
+            self.LoadedData = EntryPoint().StartUnpack(self.RawData)
         return self.LoadedData
 
     def Save(self, **kwargs):
         if self.Filename is None:
             raise FileNotFoundError("Must specify a filename to save data")
 
-        Data = EntryPoint(**kwargs).StartPack()
+        self.Data = EntryPoint(**kwargs).StartPack()
         with open(self.Filename, 'wb') as f:
-            f.write(pickle.dumps(Data))
+            f.write(pickle.dumps(self.Data))
             LogSuccess("Data saved")
 
     def __getitem__(self, key):
@@ -83,36 +84,39 @@ class StorageItem(metaclass = Meta):
             D[Key] = self.Pack(getattr(self, Key), IDsToDicts, Packed)
         return D
 
-    def Pack(self, Value, IDsToDicts, Packed, NewItem = False):
+    def Pack(self, Value, IDsToDicts, Packed, NewItem = False, LogTab = 0):
+        IterableTab = 1
+        NewObjectTab = 2
         if NewItem:
             D = {}
             for Key in self._SA:
-                print(f"Saving data in {Key}")
-                D[Key] = self.Pack(getattr(self, Key), IDsToDicts, Packed)
+                Log(f"Saving data in {Key}", LogTab+IterableTab)
+                D[self.Pack(Key, IDsToDicts, Packed, False, LogTab+IterableTab)] = self.Pack(getattr(self, Key), IDsToDicts, Packed, False, LogTab+IterableTab)
             if self._StoreTmpAttributes:
                 for Key, DefaultValue in self._TA.items():
-                    print(f"Saving default attribute {Key}")
-                    D[Key] = self.Pack(DefaultValue, IDsToDicts, Packed) # Class is reinstanciated with the default value
+                    Log(f"Saving default attribute {Key}", LogTab)
+                    D[Key] = self.Pack(DefaultValue, IDsToDicts, Packed, False, LogTab+IterableTab) # Class is reinstanciated with the default value
             self._Modified = False
             return D
         if isinstance(Value, StorageItem):
             if Value in Packed:
                 ID = Packed[Value]
+                Log(f"Referenced object as ID {ID}", LogTab)
             else:
                 ID = max(Packed.values()) + 1
                 Packed[Value] = ID
-                print(f"Packed object {Value} as ID {ID}")
-                IDsToDicts[ID] = Value.Pack(None, IDsToDicts, Packed, NewItem = True)
+                Log(f"Packing object {Value} as ID {ID}", LogTab)
+                IDsToDicts[ID] = Value.Pack(None, IDsToDicts, Packed, True, LogTab+NewObjectTab)
             return (REFERENCE, ID)
         VType = type(Value)
         if VType == dict:
-            return (DICT, {VKey:self.Pack(VValue, IDsToDicts, Packed) for VKey, VValue in Value.items()})
+            return (DICT, {self.Pack(VKey, IDsToDicts, Packed, False, LogTab+IterableTab):self.Pack(VValue, IDsToDicts, Packed, False, LogTab+IterableTab) for VKey, VValue in Value.items()})
         elif VType == tuple:
-            return (TUPLE, tuple([self.Pack(VValue, IDsToDicts, Packed) for VValue in Value]))
+            return (TUPLE, tuple([self.Pack(VValue, IDsToDicts, Packed, False, LogTab+IterableTab) for VValue in Value]))
         elif VType == list:
-            return (LIST, [self.Pack(VValue, IDsToDicts, Packed) for VValue in Value])
+            return (LIST, [self.Pack(VValue, IDsToDicts, Packed, False, LogTab+IterableTab) for VValue in Value])
         elif VType == set:
-            return (SET, [self.Pack(VValue, IDsToDicts, Packed) for VValue in Value])
+            return (SET, [self.Pack(VValue, IDsToDicts, Packed, False, LogTab+IterableTab) for VValue in Value])
         elif VType == np.ndarray: # Possible error here, if V.shape = ()
             #return (ARRAY, [self.Pack(VValue, IDsToDicts, Packed) for VValue in Value.tolist()])
             return (ARRAY, Value)
@@ -126,19 +130,9 @@ class StorageItem(metaclass = Meta):
             ID = Type
             Unpacked[ID] = self
             self._Modified = False
-            #MissingAttributes = set(self._SA)
             for Key, Data in Value.items():
-                setattr(self, Key, self.Unpack(*Data, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key))
-            #    if Key not in self._SA:
-            #        Log(f"Loaded wrong attribute : {Key}", LogTab)
-            #    else:
-            #        MissingAttributes.remove(Key)
-            #for Key in MissingAttributes:
-            #    Log(f"Missing attribute : {Key}", LogTab)
-
+                setattr(self, self.Unpack(*Key, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key), self.Unpack(*Data, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key))
             Log(f"Unpacked new object {self.LibRef} with ID {ID}", LogTab)
-#            self.Start()
-#            Log(f"{self} started", LogTab)
             return
         if Type in (DICT, LIST, SET, TUPLE, ARRAY):
             Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking {len(Value)}-items iterable", LogTab)
@@ -149,14 +143,15 @@ class StorageItem(metaclass = Meta):
                 return Unpacked[ID]
             else:
                 Value = IDsToDicts[ID]
-                LibRef = Value.pop('LibRef')[1]
+                LibRef = Value.pop((BUILDIN, 'LibRef'))[1]
                 Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking new object {ID} from LibRef {LibRef}", LogTab)
                 StorageItem.Library[LibRef](UnpackData = (ID, Value, IDsToDicts, Unpacked, True, LogTab))
                 #Unpacked[ID] = StorageItem.Library[Value.pop('LibRef')[1]](UnpackData = (ID, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab))
                 #Unpacked[ID].Unpack(DICT, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab)
                 return Unpacked[ID]
         elif Type == DICT:
-            return {VKey:self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+IterableTab, VKey) for VKey, VValue in Value.items()}
+            print([(VKey, VValue) for VKey, VValue in Value.items()])
+            return {self.Unpack(*VKey, IDsToDicts, Unpacked, False, LogTab+IterableTab, f"{VKey}(key)"):self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+IterableTab, VKey) for VKey, VValue in Value.items()}
         elif Type == TUPLE:
             return tuple([self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+IterableTab) for VValue in Value])
         elif Type == LIST:

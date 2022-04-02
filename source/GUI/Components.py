@@ -37,7 +37,7 @@ class StateC(StorageItem):
         for Value, State in enumerate(self.Parent.Names):
             self.StoredAttribute(State, Value == self.Value)
     def __repr__(self):
-        return self.Name
+        return self.Name + "_repr"
     @cached_property
     def Color(self):
         return Colors.Component.Modes[self.Value]
@@ -170,7 +170,7 @@ class ComponentBase(StorageItem):
     def InputReady(self): # Base components are not ready as they should not be updated (wires, connexions, ...)
         return False
     def __call__(self):
-        pass
+        return False
     @property
     def Level(self):
         if self.Group is None:
@@ -303,10 +303,11 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
 
     def __call__(self):
         if not self.InputReady:
-            return
+            return False
+        Level = self.Level
         for Pin, Level in zip(self.OutputPins, self.Run(*self.Input)):
             Pin.Level = Level
-
+        return self.Level != Level
     @property
     def Input(self):
         return [Pin.Level for Pin in self.InputPins]
@@ -317,7 +318,10 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
     def Level(self): # We define a cased component level as the binary representation of its output
         Level = 0
         for nPin, Pin in enumerate(self.OutputPins):
-            Level |= Pin.Level << nPin
+            try:
+                Level |= Pin.Level << nPin
+            except:
+                pass
         return Level
 
     @property
@@ -326,7 +330,10 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
 
     @property
     def InputReady(self):
-        return (not None in self.Input)
+        for Level in self.Input:
+            if Level >> 1:
+                return False
+        return True
 
     def Drag(self, Cursor):
         self.Location = np.array(Cursor)
@@ -496,7 +503,7 @@ class ComponentPinC(ComponentBase):
         return self.Location.reshape((1,2))
 
     def __repr__(self):
-        return f"{self.Parent} {self.CName} {self.Name} ({self.ID})"
+        return f"{self.Parent.CName} {self.CName} {self.Name} ({self.ID})"
 
 class InputPinC(ComponentPinC):
     CName = "Input Pin"

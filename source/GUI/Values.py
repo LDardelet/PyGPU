@@ -12,13 +12,15 @@ class C:
     orange = 'orange'
 
 class Levels:
-    Undef = None
-    Low   = 0
-    High  = 1
+    Low      = 0
+    High     = 1
+    Undef    = 2
+    Multiple = 3
     Names = {
         Undef:'?',
         Low  :'LOW',
-        High :'HIGH'
+        High :'HIGH',
+        Multiple:'?',
     }
 
 class Colors:
@@ -41,9 +43,10 @@ class Colors:
             3: C.white,    # Selected
         }
         Levels = {
-            Levels.Undef : C.white,
-            Levels.Low   : C.orange,
-            Levels.High  : C.green,
+            Levels.Undef    : C.white,
+            Levels.Low      : C.orange,
+            Levels.High     : C.green,
+            Levels.Multiple : C.red,
         }
 
 class Params:
