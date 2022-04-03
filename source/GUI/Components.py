@@ -49,6 +49,13 @@ class StateC(StorageItem):
 
 States = StatesC()
 
+def Parenting(func):
+    def ParentedFunction(self, *args, **kwargs):
+        for Child in self.Children:
+            getattr(Child, func.__name__)(*args, **kwargs)
+        return func(self, *args, **kwargs)
+    return ParentedFunction
+
 class ComponentBase(StorageItem):
     Board = None
     DefaultLinewidth = 0
@@ -79,6 +86,7 @@ class ComponentBase(StorageItem):
 
         self.PlotInit()
 
+    @Parenting
     def Highlight(self, var):
         if var == self.Highlighted:
             return
@@ -90,25 +98,33 @@ class ComponentBase(StorageItem):
         for Plot in self.HighlightPlots:
             Plot.set_linewidth(self.DefaultLinewidth*Factor)
             Plot.set_markersize(self.DefaultMarkersize*Factor)
-
+        return
+    @Parenting
     def Fix(self):
         if self.State.Fixed:
             return set()
         self.State = States.Fixed
         self.UpdateStyle()
         return {self}
+    @Parenting
     def Select(self):
         if self.State.Selected:
             return set()
         self.State = States.Selected
         self.UpdateStyle()
         return {self}
+    @Parenting
     def StartRemoving(self):
         if self.State.Removing:
             return set()
         self.State = States.Removing
         self.UpdateStyle()
         return {self}
+    @Parenting
+    def destroy(self):
+        for plot in self.Plots:
+            plot.remove()
+
 
     def LinkedTo(self, Component):
         return Component in self.Links
@@ -160,6 +176,7 @@ class ComponentBase(StorageItem):
         else:
             self.NeutralPlots.append(Text)
 
+    @Parenting # Potential issue here
     def Rotate(self):
         if not self.RotationAllowed:
             return
@@ -167,7 +184,7 @@ class ComponentBase(StorageItem):
         self.UpdateLocation()
 
     @property
-    def InputReady(self): # Base components are not ready as they should not be updated (wires, connexions, ...)
+    def InputReady(self): # Base components are not ready by default as they should not be updated (wires, connexions, ...)
         return False
     def __call__(self):
         return False
@@ -215,10 +232,6 @@ class ComponentBase(StorageItem):
             self.destroy()
         elif self.State.Selected or self.State.Removing:
             self.Fix()
-
-    def destroy(self):
-        for plot in self.Plots:
-            plot.remove()
 
     def __repr__(self):
         return f"{self.CName} ({self.ID})"
@@ -316,12 +329,11 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
         return [Pin.Level for Pin in self.OutputPins]
     @property
     def Level(self): # We define a cased component level as the binary representation of its output
+        if not self.InputReady:
+            return 0
         Level = 0
         for nPin, Pin in enumerate(self.OutputPins):
-            try:
-                Level |= Pin.Level << nPin
-            except:
-                pass
+            Level |= Pin.Level << nPin
         return Level
 
     @property
@@ -344,6 +356,7 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
         P2 = self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height]), self.Rotation)
         return (Location >= np.minimum(P1, P2)).all() and (Location <= np.maximum(P1, P2)).all()
 
+    @Parenting
     def UpdateLocation(self):
         for Plot, (Xs, Ys) in zip(self.Plots[:4], self.CasingSides):
             Plot.set_data(Xs, Ys)
@@ -351,8 +364,6 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
         self.Plots[4].set_x(TLoc[0])
         self.Plots[4].set_y(TLoc[1])
         self.Plots[4].set_rotation(self.TextRotation)
-        for Pin in self.Children:
-            Pin.UpdateLocation()
 
     def PlotInit(self):
         Color, Alpha = self.Color, self.Alpha
@@ -378,28 +389,6 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
                 ((x,X), (Y,Y)), # North
                 ((X,X), (Y,y)), # East
                 ((X,x), (y,y))) # South
-
-    def destroy(self):
-        super().destroy()
-        for Pin in self.Children:
-            Pin.destroy()
-
-    def Highlight(self, var):
-        super().Highlight(var)
-        for Pin in self.Children:
-            Pin.Highlight(var)
-    def Fix(self):
-        for Pin in self.Children:
-            Pin.Fix()
-        return super().Fix()
-    def Select(self):
-        for Pin in self.Children:
-            Pin.Select() 
-        return super().Select()
-    def StartRemoving(self):
-        for Pin in self.Children:
-            Pin.StartRemoving()
-        return super().StartRemoving()
 
     @property
     def AdvertisedLocations(self):
@@ -543,11 +532,17 @@ class WireC(ComponentBase):
     DefaultLinewidth = Params.GUI.PlotsWidths.Wire
     DefaultMarkersize = 0
     CName = "Wire"
-    def __init__(self, Location, Rotation):
+    def __init__(self, Location, Rotation, WireParent=None):
         super().__init__(Location, Rotation)
         self.StoredAttribute('BuildMode', self.__class__.BuildMode)
 
         self.Start()
+        if WireParent is None:
+            self.WireChild = self.__class__(Location, Rotation, self) 
+            self.WireParent = None
+        else:
+            self.WireChild = None
+            self.WireParent = WireParent
 
     def SetBuildMode(self, mode):
         self.BuildMode = mode
@@ -555,92 +550,121 @@ class WireC(ComponentBase):
 
     def PlotInit(self):
         Color, Alpha = self.Color, self.Alpha
-        self.plot(self.Location[:2,0], self.Location[:2,1], color = Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth, alpha = Alpha)
-        self.plot(self.Location[1:,0], self.Location[1:,1], color = Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth, alpha = Alpha)
-        self.UpdateLocation()
+        self.plot(self.Location[:,0], self.Location[:,1], color = Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth, alpha = Alpha)
 
     @property
     def Location(self):
         return self._Location
     @Location.setter
     def Location(self, Location):
-        if len(Location) == 3:
-            self._Location = np.array(Location)
-        else:
-            self._Location = np.zeros((3,2), dtype = int)
-            if not Location is None:
-                self._Location[(0,2),:] = np.array(Location)
+        self._Location = np.zeros((2,2), dtype = int)
+        self._Location[:,:] = np.array(Location)
+
+    @property 
+    def Children(self): # Children is now a property. Allows to dynamicaly discard the child wire, and to avoid registering it if not CanFix
+        if not self.State.Building or self.WireChild is None or not self.WireChild.CanFix:
+            return set() # Returning a set for now, to match other components
+        return {self.WireChild} # 
+    @Children.setter
+    def Children(self, Value):
+        pass
+    def Fix(self):
+        if not self.WireChild is None:
+            if self.WireChild.CanFix:
+                self.WireChild.Fix()
+            else:
+                self.WireChild.destroy()
+        res = super().Fix()
+        self.WireChild = None
+        self.WireParent = None
+        return res
     @property
     def AdvertisedLocations(self):
+        if not self.CanFix:
+            raise Exception("Asking AdvertisedLocations of a non buildable wire")
         AdvertisedLocations = []
-        P1, P2, P3 = self.Location
-        (A1, A2), (D1, D2) = self.Angles
-        if (P2 != P1).any():
-            AdvertisedLocations.append((P1[0], P1[1], A1+D1))
-            for x, y in np.linspace(P1, P2, abs(P2-P1).max()+1, dtype = int)[1:-1]:
-                AdvertisedLocations.append((x,y,A1))
-                AdvertisedLocations.append((x,y,A1+4))
-            AdvertisedLocations.append((P2[0], P2[1], (A1+D1+4)%8))
-        if (P3 != P2).any():
-            AdvertisedLocations.append((P2[0], P2[1], A2+D2))
-            for x, y in np.linspace(P2, P3, abs(P3-P2).max()+1, dtype = int)[1:-1]:
-                AdvertisedLocations.append((x,y,A2))
-                AdvertisedLocations.append((x,y,A2+4))
-            AdvertisedLocations.append((P3[0], P3[1], (A2+D2+4)%8))
+        P1, P2 = self.Location
+        A = self.StartAngle
+        AdvertisedLocations.append((P1[0], P1[1], A))
+        for x, y in np.linspace(P1, P2, abs(P2-P1).max()+1, dtype = int)[1:-1]:
+            AdvertisedLocations.append((x,y,A))
+            AdvertisedLocations.append((x,y,(A+4)%8))
+        AdvertisedLocations.append((P2[0], P2[1], (A+4)%8))
         return np.array(AdvertisedLocations)
     @property
     def AdvertisedConnexions(self):
-        return self.Location[(0,2),:2]
-        #return self.Location
+        return self.Location
 
-    def UpdateLocation(self):
+    def UpdateLocation(self): # Parent takes care of moving child for building
+        if self.WireChild is None:
+            return
+        P1 = self.Location[0,:]
+        P3 = self.WireChild.Location[1,:]
         if self.BuildMode == 0: # Straight wires
             if (self.Rotation & 0b1) == 0:
-                self.Location[1,0] = self.Location[2,0]
-                self.Location[1,1] = self.Location[0,1]
+                P2 = np.array([P3[0], P1[1]])
             else:
-                self.Location[1,0] = self.Location[0,0]
-                self.Location[1,1] = self.Location[2,1]
+                P2 = np.array([P1[0], P3[1]])
         else:
-            Offsets = self.Location[2,:] - self.Location[0,:]
+            Offsets = P3 - P1
             Lengths = abs(Offsets)
             StraightAxis = Lengths.argmax()
             SignStraight = np.sign(Offsets[StraightAxis])
             Offsets[1-StraightAxis] = 0
             Offsets[StraightAxis] -= SignStraight * Lengths.min()
             if (self.Rotation & 0b1) == 0:
-                self.Location[1,:] = self.Location[0,:] + Offsets
+                P2 = P1 + Offsets
             else:
-                self.Location[1,:] = self.Location[2,:] - Offsets
-        self.Plots[0].set_data(self.Location[:2,0], self.Location[:2,1])
-        self.Plots[1].set_data(self.Location[1:,0], self.Location[1:,1])
+                P2 = P3 - Offsets
+        if (P2 == P1).all():  # If WireParent has 0 length, and WireChild can be built
+            P2 = np.array(P3) # We forcefully make the child be the null segment
+        self.Location[1,:] = P2
+        self.WireChild.Location[0,:] = P2
+        
+        self.UpdatePlot()
+        self.WireChild.UpdatePlot()
+
+    def Extend(self, Wire): # Assumes that all previous checks have been made. Wire is a colinear wire starting at the same location as self. Must ensure to keep self.StartAngle unchanged
+        S1, E1 = self.Location
+        S2, E2 = Wire.Location
+        if (S1==S2).all(): # E1 must be kept
+            self.Location[0,:] = E2
+        elif (E1==E2).all(): # S1 must be kept
+            self.Location[1,:] = S2
+        elif (S1==E2).all(): # E1 must be kept
+            self.Location[0,:] = S2
+        elif (E1==S2).all(): # S1 must be kept
+            self.Location[1,:] = E2
+        else:
+            LogError(f"Wrong locations while extending {self} and {Wire}")
+        self.UpdatePlot()
+
+    def UpdatePlot(self):
+        self.Plots[0].set_data(self.Location[:,0], self.Location[:,1])
 
     @property
-    def Angles(self):
-        Offsets = self.Location[1:,:] - self.Location[:2,:]
-        As = np.zeros(2, dtype = int)
-        Ds = np.zeros(2, dtype = int)
-        for i in range(2):
-            Offset = Offsets[i, :]
-            if Offset[1] == 0:
-                As[i] = 0
-            elif Offset[0] == Offset[1]:
-                As[i] = 1
-            elif Offset[0] == 0:
-                As[i] = 2
-            else:
-                As[i] = 3
-            if Offset[1] < 0 or (Offset[1] == 0 and Offset[0] < 0):
-                Ds[i] = 4
-        return As, Ds
+    def StartAngle(self):
+        Offset = self.Location[1,:] - self.Location[0,:]
+        if Offset[1] == 0:
+            A = 0
+        elif Offset[0] == Offset[1]:
+            A = 1
+        elif Offset[0] == 0:
+            A= 2
+        else:
+            A = 3
+        if Offset[1] < 0 or (Offset[1] == 0 and Offset[0] < 0):
+            return A + 4
+        else:
+            return A
 
     def Drag(self, Cursor):
-        self.Location[2,:] = Cursor
+        self.WireChild.Location[1,:] = Cursor
         self.UpdateLocation()
 
     @property
     def CanFix(self):
-        return (self.Location[0,:] != self.Location[2,:]).any()
+        return (self.Location[0,:] != self.Location[1,:]).any()
 
 class ConnexionC(ComponentBase):
     CName = "Connexion"
@@ -692,7 +716,16 @@ class ConnexionC(ComponentBase):
             return True
         # Some situations may be unchecked here. Possibly add check self.Location in set(self.Links).pop().AdvertisedConnexions
         return False
-        
+    @property
+    def ShouldMergeWires(self):
+        if self.NWires != 2 or len(self.IDs) != 2:
+            return False
+        for LinkedComponent in self.Links:
+            if not isinstance(LinkedComponent, WireC):
+                return False
+        Links = set(self.Links)
+        return Links.pop().StartAngle%4 == Links.pop().StartAngle%4 # Ugly but works, should not always be true
+
     @property
     def AdvertisedLocations(self):
         return np.array([[self.Location[0], self.Location[1], -1]])

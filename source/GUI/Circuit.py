@@ -84,6 +84,7 @@ class ComponentsHandlerC(StorageItem):
     @Modifies
     @Building
     def Remove(self, Components):
+        Components = {Component for Component in Components if not isinstance(Component, ComponentsModule.ConnexionC)}
         print(f"Attempting to remove {Components}")
         self.UnsetComponents(Components)
         for Component in Components:
@@ -96,7 +97,7 @@ class ComponentsHandlerC(StorageItem):
         return (IDs == 0).all() # TODO : Ask for wire bridges
             #LogWarning(f"Unable to register the new component, due to positions {NewLocations[np.where(IDs != 0), :].tolist()}")
 
-    def SetComponent(self, Component): # Sets the ID of a component and stores it. Handles links through LinkToOthers.
+    def SetComponent(self, Component): # Sets the ID of a component and stores it, and affects groups before any merge. Handles links through LinkToOthers.
         for Child in Component.Children:
             self.SetComponent(Child)
 
@@ -106,6 +107,9 @@ class ComponentsHandlerC(StorageItem):
         else:
             self.CasingGroup.AddComponent(Component)
         self.LinkToOthers(Component)
+        if isinstance(Component, ComponentsModule.WireC):
+            self.CheckWireMerges(Component)
+
     def UnsetComponents(self, InputComponents):
         InputComponents = set(InputComponents)
         Components = set()
@@ -175,6 +179,27 @@ class ComponentsHandlerC(StorageItem):
                     self.Link(NewComponent, Connexion)
             else:
                 self.AddConnexion((x,y)) # If not, we create it
+
+    def CheckWireMerges(self, W1):
+        for x, y in W1.AdvertisedConnexions:
+            Connexion = self.Components[self.Map[x,y,-1]]
+            if Connexion.ShouldMergeWires:
+                W2 = Connexion.Links.difference({W1}).pop() # Makes merge symetric
+                if W1.Group != W2.Group:
+                    raise Exception(f"Merging wires {W1} and {W2} from two different groups")
+                self.Unlink(W1, Connexion)
+                self.Unlink(W2, Connexion)
+                for Comp in set(W2.Links):
+                    self.Unlink(W2, Comp)
+                    self.Link(W1, Comp)
+                for x, y, theta in W2.AdvertisedLocations:
+                    self.Map[x,y,theta] = W1.ID
+                self.Map[x,y,-1] = 0
+                W1.Extend(W2)
+                W2.destroy()
+                Connexion.destroy()
+                del self.Components[W2.ID]
+                del self.Components[Connexion.ID]
 
     @staticmethod
     def Link(C1, C2):
@@ -306,7 +331,6 @@ class GroupC(StorageItem):
     def Merge(self, Group): 
         for Component in set(Group.Components):
             self.AddComponent(Component)
-        return Group.ID
 
     @classmethod
     def CreateGroupFrom(cls, ComponentsSet):
@@ -318,7 +342,7 @@ class GroupC(StorageItem):
                 Component.UpdateStyle()
         return NewGroup
 
-    def Split(self, RemovedComponents, Log = False): 
+    def Split(self, RemovedComponents, Log = False, WarnEmptyGroup = False): 
         if not Log:
             def Log(txt):
                 pass
@@ -357,7 +381,7 @@ class GroupC(StorageItem):
             else:
                 Group = self
             Log(f"Final set for {Group}: {Group.Components}")
-            if not FoundValidComponent:
+            if not FoundValidComponent and WarnEmptyGroup:
                 LogWarning(f"{Group} contains only {len(Group.Connexions)} connexions")
 
     def AddComponent(self, NewComponent, AutoSet = True):
@@ -377,6 +401,8 @@ class GroupC(StorageItem):
             self.Highlightables.add(NewComponent)
         if not Level is None:
             self.SetLevel(Level, NewComponent)
+        else:
+            self.TriggerComponentLevel(NewComponent)
 
     def RemoveComponent(self, Component, AutoSet = True, AutoRemove = True):
         Component.Group = None
@@ -390,6 +416,8 @@ class GroupC(StorageItem):
             else:
                 PickedComponent = list(self.SetBy.keys())[0]
                 self.SetLevel(self.SetBy[PickedComponent], PickedComponent)
+            if not self.SetBy and self.Components:
+                self.UnsetWarning()
         if not self.Components and AutoRemove:
             del self.Handler.Groups[self.ID]
 
@@ -400,16 +428,17 @@ class GroupC(StorageItem):
         if len(self.SetBy) == 1:
             self.Level, Change = Level, Level != self.Level
         elif len(self.SetBy) == 0:
-            self.UnsetWarning()
             self.Level, Change = Levels.Undef, Level != self.Level
         else:
             self.MultipleSetWarning()
             self.Level, Change = Levels.Multiple, Level != self.Level
         if Change:
             for Component in self.Components:
-                Component.UpdateStyle()
-                if Component.TriggersParent:
-                    self.Handler.UpdateRequest(Component.Parent)
+                self.TriggerComponentLevel(Component)
+    def TriggerComponentLevel(self, Component):
+        Component.UpdateStyle()
+        if Component.TriggersParent:
+            self.Handler.UpdateRequest(Component.Parent)
     def UnsetWarning(self):
         LogWarning(f"Group {self.ID} not set anymore")
     def MultipleSetWarning(self):
@@ -420,13 +449,13 @@ class GroupC(StorageItem):
             Component.Highlight(var)
     @property
     def Selected(self): # We assume that a group is only selected if the entire group is selected
-        for Component in self.Components:
+        for Component in self.Highlightables:
             if not Component.Selected:
                 return False
         return True
     @property
     def Removing(self): # We assume that a group is only being removed if the entire group is being removed
-        for Component in self.Components:
+        for Component in self.Highlightables:
             if not Component.Removing:
                 return False
         return True
@@ -438,13 +467,13 @@ class GroupC(StorageItem):
         return Switched
     def Select(self):
         Switched = set()
-        for Component in self.Components:
+        for Component in self.Highlightables:
             if type(Component) != ComponentsModule.ComponentPinC:
                 Switched.update(Component.Select())
         return Switched
     def StartRemoving(self):
         Switched = set()
-        for Component in self.Components:
+        for Component in self.Highlightables:
             if type(Component) != ComponentsModule.ComponentPinC:
                 Switched.update(Component.StartRemoving())
         return Switched

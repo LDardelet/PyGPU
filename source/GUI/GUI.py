@@ -124,7 +124,7 @@ class GUI:
                 self.Size = Params.GUI.View.Zooms[0]
             else:
                 self.Size = max(Params.GUI.View.Zooms[0], (self.CH.ComponentsLimits[:,1] - self.CH.ComponentsLimits[:,0]).max())
-            self.Cursor = self.CH.ComponentsLimits.mean(axis = 0).astype(int)
+            self.Cursor = self.CH.ComponentsLimits.mean(axis = 1).astype(int)
             self.LeftBotLoc = self.Cursor - (self.Size // 2)
         else:
             raise NotImplementedError
