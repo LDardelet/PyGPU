@@ -1,7 +1,7 @@
 import numpy as np
 
 import Components as ComponentsModule
-from Values import Colors, Params, Levels
+from Values import Colors, Params, Levels, PinDict
 from Console import Log, LogSuccess, LogWarning, LogError
 import DefaultLibrary
 from Storage import StorageItem, Modifies
@@ -13,6 +13,7 @@ class ComponentsHandlerC(StorageItem):
         self.StoredAttribute('Components', {})
         self.StoredAttribute('Groups', {})
         self.StoredAttribute('Casings', {})
+        self.StoredAttribute('IO', ({}, {}))
         self.StoredAttribute('CasingGroup', CasingGroupC())
         self.Start()
 
@@ -27,14 +28,14 @@ class ComponentsHandlerC(StorageItem):
         self.AwaitingUpdates = set()
 
     def Building(func):
-        def RegisterBuilding(self, *args, **kwargs):
+        def Wrap(self, *args, **kwargs):
             self.Ready = False
             output = func(self, *args, **kwargs)
             if self.LiveUpdate:
                 self.SolveRequests()
             self.Ready = True
             return output
-        return RegisterBuilding
+        return Wrap
 
     def ComputeChain(self):
         Log("Updating chain")
@@ -77,6 +78,9 @@ class ComponentsHandlerC(StorageItem):
 
         self.SetComponent(NewComponent)
         NewComponent.Fix()
+
+        if isinstance(NewComponent, ComponentsModule.BoardPinC) and (NewComponent.Group.Level == Levels.Undef):
+            NewComponent.Type = PinDict.Input
 
         self.UpdateRequest(NewComponent)    
         return True
@@ -279,19 +283,22 @@ class ComponentsHandlerC(StorageItem):
         for ID in Column[:-1]:
             if ID:
                 Component = self.Components[ID]
-                if Component.Group in Groups:
-                    Groups[Component.Group].add(Component)
+                if not Component.Group in Groups:
+                    Groups[Component.Group] = (set(), set())
+                if isinstance(Component, ComponentsModule.WireC):
+                    Groups[Component.Group][0].add(str(Component.ID))
                 else:
-                    Groups[Component.Group] = {Component}
+                    Groups[Component.Group][1].add(Component)
         if not Groups:
             return ""
 
-        #return ', '.join([f'Group {Group.ID} : '+ ', '.join([str(Component) for Component in Components])+f' ({Levels.Names[Group.Level]})' for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
-        return ', '.join([f'{Group}' + ': '*bool(Group.__repr__())+ ', '.join([str(Component) for Component in Components]) for Group, Components in Groups.items()]) + (len(Groups)>1)*' (isolated)'
+        return ', '.join([f'{Group}' + ': '*bool(Group.__repr__()) + ', '.join(bool(Wires)*[f"Wire{'s'*(len(Wires)>1)} ({', '.join(sorted(Wires))})"] + bool(Components)*[', '.join([str(Component) for Component in Components])]) for Group, (Wires, Components) in Groups.items()]) + (len(Groups)>1)*' (isolated)'
 
     def CasingsInfo(self, Location):
         return ', '.join([str(Casing) for Casing in self.CursorCasings(Location)])
 
+    def FreeSlot(self, Location):
+        return (self.Map[Location[0], Location[1], :8] == 0).any()
     def Wired(self, Location):
         for ID in self.Map[Location[0], Location[1], :8]:
             if ID and (isinstance(self.Components[ID], ComponentsModule.WireC) or isinstance(self.Components[ID], ComponentsModule.ComponentPinC)):
@@ -318,7 +325,7 @@ class GroupC(StorageItem):
         self.StoredAttribute('InitialComponent', Component)
         self.StoredAttribute('Components', set())
         self.StoredAttribute('Connexions', set())
-        self.StoredAttribute('Highlightables', set())
+        self.StoredAttribute('Wires', set())
         self.StoredAttribute('Level', Levels.Undef)
         self.StoredAttribute('SetBy', {})
         self.AddComponent(Component)
@@ -397,8 +404,8 @@ class GroupC(StorageItem):
         self.Components.add(NewComponent)
         if isinstance(NewComponent, ComponentsModule.ConnexionC):
             self.Connexions.add(NewComponent)
-        if not isinstance(NewComponent, ComponentsModule.ConnexionC) and not isinstance(NewComponent, ComponentsModule.ComponentPinC):
-            self.Highlightables.add(NewComponent)
+        if isinstance(NewComponent, ComponentsModule.WireC):
+            self.Wires.add(NewComponent)
         if not Level is None:
             self.SetLevel(Level, NewComponent)
         else:
@@ -408,33 +415,42 @@ class GroupC(StorageItem):
         Component.Group = None
         self.Components.remove(Component)
         self.Connexions.discard(Component)
-        self.Highlightables.discard(Component)
+        self.Wires.discard(Component)
         if AutoSet and Component in self.SetBy:
-            del self.SetBy[Component]
-            if not self.SetBy:
-                self.SetLevel()
-            else:
-                PickedComponent = list(self.SetBy.keys())[0]
-                self.SetLevel(self.SetBy[PickedComponent], PickedComponent)
-            if not self.SetBy and self.Components:
-                self.UnsetWarning()
+            self.RemoveLevelSet(Component)
         if not self.Components and AutoRemove:
             del self.Handler.Groups[self.ID]
 
     def SetLevel(self, Level = None, Component = None):
-        print(Level, Component)
+        if not Level is None:
+            print(self, self.Level, 'set to', Levels.Names[Level], 'by', Component)
+        else:
+            print(self, self.Level, "to default set")
         if Component != None:
             self.SetBy[Component] = Level
+        PrevLevel = self.Level
         if len(self.SetBy) == 1:
-            self.Level, Change = Level, Level != self.Level
+            self.Level = Level
         elif len(self.SetBy) == 0:
-            self.Level, Change = Levels.Undef, Level != self.Level
+            if self.Components:
+                self.UnsetWarning() # Careful, SetBy[C] = Undef is possible, in the case of an input board pin with DefinedValue = Undef. 
+            self.Level = Levels.Undef
         else:
             self.MultipleSetWarning()
-            self.Level, Change = Levels.Multiple, Level != self.Level
-        if Change:
+            self.Level = Levels.Multiple
+        if PrevLevel != self.Level:
             for Component in self.Components:
                 self.TriggerComponentLevel(Component)
+    def RemoveLevelSet(self, Component):
+        if not Component in self.SetBy:
+            raise Exception("{Component} was not level setter for {self}")
+        del self.SetBy[Component]
+        if not self.SetBy:
+            self.SetLevel()
+        else:
+            PickedComponent = list(self.SetBy.keys())[0]
+            self.SetLevel(self.SetBy[PickedComponent], PickedComponent)
+
     def TriggerComponentLevel(self, Component):
         Component.UpdateStyle()
         if Component.TriggersParent:
@@ -445,18 +461,18 @@ class GroupC(StorageItem):
         LogWarning(f"Group {self.ID} set by {', '.join([str(Component) for Component in self.SetBy])}")
 
     def Highlight(self, var):
-        for Component in self.Highlightables:
-            Component.Highlight(var)
+        for Wire in self.Wires:
+            Wire.Highlight(var)
     @property
     def Selected(self): # We assume that a group is only selected if the entire group is selected
-        for Component in self.Highlightables:
-            if not Component.Selected:
+        for Wire in self.Wires:
+            if not Wire.Selected:
                 return False
         return True
     @property
     def Removing(self): # We assume that a group is only being removed if the entire group is being removed
-        for Component in self.Highlightables:
-            if not Component.Removing:
+        for Wire in self.Wires:
+            if not Wire.Removing:
                 return False
         return True
     def Fix(self):
@@ -467,15 +483,13 @@ class GroupC(StorageItem):
         return Switched
     def Select(self):
         Switched = set()
-        for Component in self.Highlightables:
-            if type(Component) != ComponentsModule.ComponentPinC:
-                Switched.update(Component.Select())
+        for Wire in self.Wires:
+            Switched.update(Wire.Select())
         return Switched
     def StartRemoving(self):
         Switched = set()
-        for Component in self.Highlightables:
-            if type(Component) != ComponentsModule.ComponentPinC:
-                Switched.update(Component.StartRemoving())
+        for Wire in self.Wires:
+            Switched.update(Wire.StartRemoving())
         return Switched
     def Clear(self):
         for Component in self.Components:
@@ -485,8 +499,9 @@ class GroupC(StorageItem):
     def Color(self):
         return Colors.Component.Levels[self.Level]
     def __repr__(self):
+        return f"Group {self.ID} ({', '.join([Levels.Names[self.Level]] + [str(ID) for ID in sorted([Component.ID for Component in self.SetBy.keys()])])})"
         if len(self.SetBy) == 0:
-            LevelStr = f"({Levels.Names[self.Level]}, unset)"
+            LevelStr = f"({Levels.Names[self.Level]})"
         elif len(self.SetBy) == 1:
             LevelStr = f"({Levels.Names[self.Level]}, {str(list(self.SetBy.keys())[0].ID)})"
         else:
@@ -515,50 +530,54 @@ class CasingGroupC(StorageItem):
             self.RemoveComponent(Component)
 
 # Component template signature :
-# (InputPins, OutputPins, Callback, Schematics, ForceWidth, ForceHeight, DisplayPinNumbering, Symbol)
+# (InputPins, OutputPins, Callback, Board, ForceWidth, ForceHeight, PinLabelRule, Symbol)
 
 class BookC:
     def __init__(self, Name, BookComponents = {}):
         self.Name = Name
         self.Components = []
-        for CompName, CompData in BookComponents.items():
-            if CompName in self.__dict__:
+        for CompName, (CompData, ControlKey) in BookComponents.items():
+            if hasattr(self, CompName):
                 LogWarning(f"Component name {CompName} already exists in this book")
                 continue
             self.Components.append(CompName)
             if isinstance(CompData, type(ComponentsModule.ComponentBase)):
-                self.__dict__[CompName] = CompData
-                CompData.Book = self
+                CompClass = CompData
+                CompClass.Book = self
             else:
-                self.AddComponentClass(CompName, CompData)
+                CompClass = self.CreateComponentClass(CompName, CompData)
+                if CompClass is None:
+                    continue
+            setattr(self, CompName, CompClass)
+            setattr(self, 'key_'+CompName, ControlKey)
     def __repr__(self):
         return self.Name
 
-    def AddComponentClass(self, CompName, CompData):
+    def CreateComponentClass(self, CompName, CompData):
         try:
-            InputPinsDef, OutputPinsDef, Callback, Schematics, ForceWidth, ForceHeight, DisplayPinNumbering, Symbol = CompData
+            InputPinsDef, OutputPinsDef, Callback, Board, ForceWidth, ForceHeight, PinLabelRule, Symbol = CompData
             PinIDs = set()
             for PinLocation, PinName in InputPinsDef + OutputPinsDef:
                 if PinLocation in PinIDs:
                     raise ValueError
         except ValueError:
-            LogWarning(f"Unable to load component {Name} from its definition")
+            LogWarning(f"Unable to load component {CompName} from its definition")
             return
-        self.__dict__[CompName] = type(CompName, 
-                                   (ComponentsModule.CasedComponentC, ), 
-                                   {
-                                       #'__init__': Components.CasedComponentC.__init__,
-                                       'CName': CompName,
-                                       'Book': self.Name,
-                                       'InputPinsDef'    : InputPinsDef,
-                                       'OutputPinsDef'    : OutputPinsDef,
-                                       'Callback'   : Callback,
-                                       'Schematics' : Schematics,
-                                       'ForceWidth' : ForceWidth,
-                                       'ForceHeight': ForceHeight,
-                                       'DisplayPinNumbering':DisplayPinNumbering,
-                                       'Symbol':Symbol,
-                                   })
+        return type(CompName, 
+                    (ComponentsModule.CasedComponentC, ), 
+                    {
+                        #'__init__': Components.CasedComponentC.__init__,
+                        'CName': CompName,
+                        'Book': self.Name,
+                        'InputPinsDef'    : InputPinsDef,
+                        'OutputPinsDef'    : OutputPinsDef,
+                        'Callback'   : Callback,
+                        'Board' : Board,
+                        'ForceWidth' : ForceWidth,
+                        'ForceHeight': ForceHeight,
+                        'PinLabelRule':PinLabelRule,
+                        'Symbol':Symbol,
+                    })
 class CLibrary:
     ComponentBase = ComponentsModule.ComponentBase # Used to transmit Ax reference
     def __init__(self):
@@ -582,7 +601,7 @@ class CLibrary:
             self.AddSpecialStorageClass(State.__class__)
 
     def AddBook(self, Book):
-        self.__dict__[Book.Name] = Book
+        setattr(self, Book.Name, Book)
         self.Books.append(Book.Name)
 
     def IsWire(self, C): # Checks if class or class instance

@@ -57,7 +57,7 @@ def Parenting(func):
     return ParentedFunction
 
 class ComponentBase(StorageItem):
-    Board = None
+    Display = None
     DefaultLinewidth = 0
     DefaultMarkersize = 0
     RotationAllowed = True
@@ -125,12 +125,11 @@ class ComponentBase(StorageItem):
         for plot in self.Plots:
             plot.remove()
 
-
     def LinkedTo(self, Component):
         return Component in self.Links
 
     @property
-    def CanFix(self): # Property that ensures all condition have been checked for this component to be fixed
+    def CanFix(self): # Property that ensures all condition have been checked for this particular component to be fixed
         return True
     def Drag(self, Cursor):
         pass
@@ -160,7 +159,7 @@ class ComponentBase(StorageItem):
             Plot.set_alpha(Alpha)
 
     def plot(self, *args, Highlight = True, LevelPlot = True, **kwargs):
-        Plot = self.Board.plot(*args, **kwargs)[0]
+        Plot = self.Display.plot(*args, **kwargs)[0]
         self.Plots.append(Plot)
         if LevelPlot:
             self.LevelsPlots.append(Plot)
@@ -168,8 +167,16 @@ class ComponentBase(StorageItem):
             self.NeutralPlots.append(Plot)
         if Highlight:
             self.HighlightPlots.append(Plot)
+    def circle(self, *args, LevelPlot = True, **kwargs):
+        C = plt.Circle(*args, **kwargs)
+        self.Plots.append(C)
+        self.Display.add_patch(C)
+        if LevelPlot:
+            self.LevelsPlots.append(C)
+        else:
+            self.NeutralPlots.append(C)
     def text(self, *args, LevelPlot = False, **kwargs): # Cannot highlight text, would get messy
-        Text = self.Board.text(*args, **kwargs)
+        Text = self.Display.text(*args, **kwargs)
         self.Plots.append(Text)
         if LevelPlot:
             self.LevelsPlots.append(Text)
@@ -239,15 +246,121 @@ class ComponentBase(StorageItem):
     def LibRef(self):
         return f"{self.Book}.{self.CName}"
 
+class BoardPinC(ComponentBase):
+    DefaultLinewidth = Params.GUI.PlotsWidths.Pin
+    DefaultMarkersize = 0
+    CName = "Board Pin"
+    LibRef = "BoardPin"
+    def __init__(self, Location, Rotation):
+        super().__init__(Location, Rotation)
+        self.StoredAttribute('_Type', PinDict.Output)      # Input or output. Output by default, avoids to SetLevel group (board inputs are components inputs, thus are set externally)
+        self.StoredAttribute('DefinedLevel', Levels.Undef)
+        self.StoredAttribute('_PinLabelRule', 0b11)
+        self.StoredAttribute('Side', None)
+        self.StoredAttribute('_Index', None)
+        self.StoredAttribute('_Name', '')
+
+        self.Start()
+
+    def PlotInit(self):
+        Loc = self.Location
+        BLoc = self.PinBaseLocation
+        Color, Alpha = self.Color, self.Alpha
+        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Color, linestyle = Params.GUI.PlotsStyles.Pin, linewidth = self.DefaultLinewidth, alpha = Alpha)
+        self.text(*self.TextLocation, s=self.Label, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.Rotation))
+        self.circle(BLoc, radius = 0.5, color = Color, fill = False, linewidth = self.DefaultLinewidth, alpha = Alpha)
+
+    def Drag(self, Cursor):
+        self.Location = np.array(Cursor)
+        self.UpdateLocation()
+
+    @property
+    def Level(self):
+        return self.Group.Level
+    @Level.setter
+    def Level(self, Level):
+        if self.Type == PinDict.BoardInput:
+            self.Group.SetLevel(Level, self)
+        else:
+            raise Exception("Attempting to set level of a board output")
+    @property
+    def PinLabelRule(self):
+        return self._PinLabelRule
+    @PinLabelRule.setter
+    def PinLabelRule(self, value):
+        self._PinLabelRule = value
+        self.Plots[1].set_text(self.Label)
+    @property
+    def Index(self):
+        return self._Index
+    @Index.setter
+    def Index(self):
+        self._Index = Index
+        self.Plots[1].set_text(self.Label)
+    @property
+    def Name(self):
+        return self._Name
+    @Name.setter
+    def Name(self):
+        self._Name = Name
+        self.Plots[1].set_text(self.Label)
+
+    @property
+    def Type(self):
+        return self._Type
+    @Type.setter
+    def Type(self, Value):
+        if self._Type == Value:
+            return
+        if Value == PinDict.Input:
+            self.Group.SetLevel(self.DefinedLevel, self)
+        elif Value == PinDict.Output:
+            self.Group.RemoveLevelSet(self)
+        else:
+            raise Exception(f"Wrong {self} type {Value}")
+        self._Type = Value
+
+    @property
+    def Label(self):
+        return PinLabel(self.PinLabelRule, self.Index, self.Name)
+    @property
+    def PinBaseLocation(self):
+        return self.Location + RotateOffset(np.array([-1, 0]), self.Rotation)
+    @property
+    def TextLocation(self):
+        return self.Location + RotateOffset(np.array([-2, 0]), self.Rotation)
+
+    def UpdateLocation(self):
+        Loc = self.Location
+        BLoc = self.PinBaseLocation
+        self.Plots[0].set_data([Loc[0], BLoc[0]], [Loc[1], BLoc[1]])
+        self.Plots[1].set_position(self.TextLocation)
+        self.Plots[1].set(**PinNameDict(self.Rotation))
+        self.Plots[2].set_center(BLoc)
+
+    @property
+    def AdvertisedLocations(self):
+        Locations = np.zeros((10,3), dtype = int)
+        Locations[:9,:2] = self.PinBaseLocation
+        Locations[:9,-1] = np.arange(9)
+        Locations[-1,:]  = self.Location[0], self.Location[1], ((self.Rotation+2)%4)*2
+        return Locations
+    @property
+    def AdvertisedConnexions(self):
+        return self.Location.reshape((1,2))
+
+    def __repr__(self):
+        return f"{PinDict.PinTypeNames[self.Type]} {self.CName} " + self.Label
+
 class CasedComponentC(ComponentBase): # Template to create any type of component
     DefaultLinewidth = Params.GUI.PlotsWidths.Casing
     InputPinsDef = None
     OutputPinsDef = None
     Callback = None
-    Schematics = None
+    Board = None
     ForceWidth = None
     ForceHeight = None
-    DisplayPinNumbering = None
+    PinLabelRule = None
     Symbol = ''
     def __init__(self, Location, Rotation):
         super().__init__(Location, Rotation)
@@ -263,22 +376,17 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
             else:
                 PinsList = self.OutputPins
                 PinClass = OutputPinC
-            if self.DisplayPinNumbering:
-                if not Name:
-                    Name = str(nPin)
-                else:
-                    Name = f"{nPin} ({Name})"
             Pin = PinClass(self, Side, Index, Name)
             self.Children.add(Pin)
             PinsList.append(Pin)
 
     def Start(self):
         if self.Callback is None:
-            if self.Schematics is None:
+            if self.Board is None:
                 raise ValueError("Component must have exactly a callback or an inner schematics to run (0 given)")
-            self.Run = self.Schematics.Run
+            self.Run = self.Board.Run
         else:
-            if not self.Schematics is None:
+            if not self.Board is None:
                 raise ValueError("Component must have exactly a callback or an inner schematics to run (2 given)")
             self.Run = self.__class__.Callback
 
@@ -402,7 +510,7 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
             return np.zeros((0,3), dtype = int)
 
 class ComponentPinC(ComponentBase):
-    DefaultLinewidth = Params.GUI.PlotsWidths.Wire
+    DefaultLinewidth = Params.GUI.PlotsWidths.Pin
     DefaultMarkersize = 0
     CName = "Pin"
     LibRef = "Pin"
@@ -445,19 +553,15 @@ class ComponentPinC(ComponentBase):
         Loc = self.Location
         BLoc = self.PinBaseLocation
         Color, Alpha = self.Color, self.Alpha
-        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth, alpha = Alpha)
-        if self.Name:
-            self.text(*self.TextLocation, s=self.Name, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.Rotation + self.BaseRotation))
+        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Color, linestyle = Params.GUI.PlotsStyles.Pin, linewidth = self.DefaultLinewidth, alpha = Alpha)
+        self.text(*self.TextLocation, s=self.Label, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.Rotation + self.BaseRotation))
 
     def UpdateLocation(self):
         Loc = self.Location
         BLoc = self.PinBaseLocation
         self.Plots[0].set_data([Loc[0], BLoc[0]], [Loc[1], BLoc[1]])
-        if self.Name:
-            TLoc = self.TextLocation
-            self.Plots[1].set_x(TLoc[0])
-            self.Plots[1].set_y(TLoc[1])
-            self.Plots[1].set(**PinNameDict(self.Rotation + self.BaseRotation))
+        self.Plots[1].set_position(self.TextLocation)
+        self.Plots[1].set(**PinNameDict(self.Rotation + self.BaseRotation))
 
     @property
     def Location(self):
@@ -471,6 +575,9 @@ class ComponentPinC(ComponentBase):
     @Rotation.setter
     def Rotation(self, Rotation):
         pass
+    @property
+    def Label(self):
+        return PinLabel(self.Parent.PinLabelRule, self.Index, self.Name)
     @property
     def PinBaseLocation(self):
         return self.Parent.Location + RotateOffset(self.PinBaseOffset, self.Rotation)
@@ -492,7 +599,7 @@ class ComponentPinC(ComponentBase):
         return self.Location.reshape((1,2))
 
     def __repr__(self):
-        return f"{self.Parent.CName} {self.CName} {self.Name} ({self.ID})"
+        return f"{self.Parent.CName} {self.CName}" + self.Label
 
 class InputPinC(ComponentPinC):
     CName = "Input Pin"
@@ -511,6 +618,16 @@ class OutputPinC(ComponentPinC):
     def Level(self, Level):
         self.Group.SetLevel(Level, self)
 
+def PinLabel(PinLabelRule, Index, Name):
+    s = ""
+    if PinLabelRule & 0b1 and not Index is None:
+        s += str(Index)
+    if PinLabelRule & 0b10 and Name:
+        if s:
+            s += f" ({Name})"
+        else:
+            s += Name
+    return s
 def PinNameDict(Rotation):
     SideIndex = Rotation & 0b11
     return {'rotation':('horizontal', 'vertical', 'horizontal', 'vertical')[SideIndex],

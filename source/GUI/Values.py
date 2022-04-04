@@ -18,8 +18,8 @@ class Levels:
     Multiple = 3
     Names = {
         Undef:'?',
-        Low  :'LOW',
-        High :'HIGH',
+        Low  :'-',
+        High :'+',
         Multiple:'?',
     }
 
@@ -80,11 +80,13 @@ class Params:
         class PlotsWidths:
             HighlightFactor = 2.5
             Wire = 1
+            Pin = 1
             Connexion = 4
             Casing = 0.4
             CNameFontsize = 15
         class PlotsStyles:
             Wire = '-'
+            Pin = '-'
             Connexion = '8'
             Casing = '-'
             PinNameLevelColored = True
@@ -99,13 +101,6 @@ class Params:
             Modes = {0:"escape",
                      1:'twosuperior',
                      3:'d',
-            }
-            Components = {'and': 'a',
-                          'or' : 'o',
-                          'not': 'n',
-                          'high': 'h',
-                          'low': 'g',
-                          'wire':'w',
             }
             Close = 'f4'
             Connect = 'c'
@@ -127,7 +122,6 @@ class Params:
             StopWireOnJoin = True
             DefaultWireBuildMode = 1
             AskDeleteConfirmation = False
-
 class PinDict:
     W,E,N,S = 'WENS'
     Input = 0

@@ -203,7 +203,7 @@ class GUI:
             else:
                 self.TmpComponents.add(Component)
         elif self.Modes.Default:
-            if self.CH.Wired(self.Cursor):
+            if self.CH.HasItem(self.Cursor) and self.CH.FreeSlot(self.Cursor):
                 self.StartComponent(self.Library.Wire)
 
     def Switch(self):
@@ -257,7 +257,7 @@ class GUI:
             self.Draw()
 
     def MoveHighlight(self, Reset = False):
-        self.CanHighlight = [Group for Group in self.CH.CursorGroups(self.Cursor) if len(Group.Highlightables) > 1] \
+        self.CanHighlight = [Group for Group in self.CH.CursorGroups(self.Cursor) if len(Group.Wires) > 1] \
                             + self.CH.CursorComponents(self.Cursor) \
                             + self.CH.CursorCasings(self.Cursor) # Single item groups would create dual highlight of one component
         if not self.CanHighlight:
@@ -307,10 +307,10 @@ class GUI:
         self.LoadKeys()
 
         self.MainFrame = SFrame(self.MainWindow)
-        self.MainFrame.AddFrame("TopPanel", 0, 0, columnspan = 3)
+        self.MainFrame.AddFrame("Top_Panel", 0, 0, columnspan = 3)
         self.MainFrame.AddFrame("Library", 1, 0, Side = Tk.TOP)
         self.MainFrame.AddFrame("Board", 1, 1, Side = Tk.TOP)
-        self.MainFrame.AddFrame("RightPanel", 1, 2, Side = Tk.TOP)
+        self.MainFrame.AddFrame("Board_IO", 1, 2, Side = Tk.TOP)
         self.MainFrame.AddFrame("Console", 2, 0, columnspan = 3, Side = Tk.LEFT)
 
         self.LoadMenu()
@@ -439,7 +439,7 @@ class GUI:
 
         self.MainFrame.Board.View.AdvertiseChild(self.DisplayCanvas.get_tk_widget(), "Plot")
         self.MainFrame.Board.View.Plot.grid(row = 0, column = 0)
-        self.Library.ComponentBase.Board = self.DisplayAx
+        self.Library.ComponentBase.Display = self.DisplayAx
 
         self.PlotView()
 
@@ -487,17 +487,18 @@ class GUI:
         self.CompToButtonMap = {}
         self.CurrentCompButton = None
         for BookName in self.Library.Books:
-            Book = self.Library.__dict__[BookName]
+            Book = getattr(self.Library, BookName)
             BookFrame = self.MainFrame.Library.AddFrame(BookName, Side = Tk.TOP, NameDisplayed = True)
             CompFrame = BookFrame.AddFrame("CompFrame", NameDisplayed = False)
             for nComp, CompName in enumerate(Book.Components):
                 row = nComp // Params.GUI.Library.Columns
                 column = nComp % Params.GUI.Library.Columns
-                CompClass = Book.__dict__[CompName]
+                CompClass = getattr(Book, CompName)
+                ControlKey = getattr(Book, 'key_'+CompName)
                 Add = ''
-                if CompName.lower() in Params.GUI.Controls.Components:
-                    Add = f' ({Params.GUI.Controls.Components[CompName.lower()]})'
-                    self.AddControlKey(Params.GUI.Controls.Components[CompName.lower()], lambda key, mod, CompClass = CompClass: self.StartComponent(CompClass))
+                if ControlKey:
+                    Add = f' ({ControlKey})'
+                    self.AddControlKey(ControlKey, lambda key, mod, CompClass = CompClass: self.StartComponent(CompClass))
                 self.CompToButtonMap[CompClass] = CompFrame.AddWidget(Tk.Button, f"{BookName}.{CompName}", row = row, column = column, text = CompName+Add, height = Params.GUI.Library.ComponentHeight, 
                                                                         command = lambda CompClass = CompClass: self.StartComponent(CompClass))
 

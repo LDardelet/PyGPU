@@ -144,7 +144,7 @@ class SFrame:
             if Sticky:
                 kwargs["fill"] = Tk.BOTH
             NewFrame.frame.pack(side = self.Side, **kwargs)
-        NewFrame.AddWidget(Tk.Label, "Name", 0, 0, text = Name)
+        NewFrame.AddWidget(Tk.Label, "Name", 0, 0, text = Name.replace('_', ' '))
         return NewFrame
 
     def RemoveDefaultName(self):
