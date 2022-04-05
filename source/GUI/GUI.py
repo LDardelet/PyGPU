@@ -10,8 +10,8 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
 from Console import ConsoleWidget, Log, LogSuccess, LogWarning, LogError
-from Values import Colors, Params
-from Tools import Void, ModesDict, ModeC, SFrame
+from Values import Colors, Params, PinDict
+from Tools import Void, ModesDict, ModeC, SFrame, SEntry, SLabel
 import Circuit
 import Storage
 
@@ -83,6 +83,7 @@ class GUI:
         self.CanHighlight = [None]
         self.Highlighted = None
         self.TmpComponents = set()
+        self.SetupPins = {}
 
         self.SetView()
 
@@ -95,7 +96,7 @@ class GUI:
 
     def StartComponent(self, CClass):
         self.ColorLibComponent(self.CompToButtonMap[CClass])
-        self.Modes.Build()
+        self.Modes.Build(Message='start component')
         self.TmpComponents.add(CClass(self.Cursor, self.Rotation))
         self.Draw()
 
@@ -104,15 +105,13 @@ class GUI:
             self.TmpComponents.pop().Clear()
 
     def OnKeyMove(self, Motion, Mod):
-        if self.Modes.Console:
-            return
         Move = Motion*10**(int(Mod == 1))
         self.Cursor += Move
         self.OnMove()
 
     def OnClickMove(self, Click):
-        if self.Modes.Console:
-            self.Modes.Default()
+        if self.Modes.Text:
+            self.Modes.Default(Message='Click')
         self.Cursor = np.rint(Click).astype(int)
         self.OnMove()
 
@@ -187,6 +186,19 @@ class GUI:
                     Component.SetBuildMode(mode)
             self.Draw()
 
+    def CheckBoardPins(self):
+        NInputs = 0
+        NOutputs = 0
+        for Pin in self.CH.Pins:
+            if Pin.Type == PinDict.Input:
+                NInputs += 1
+            else:
+                NOutputs += 1
+            if Pin not in self.SetupPins:
+                pass
+        self.BoardInputEntry.NBits = NInputs
+        self.BoardOutputLabel.NBits = NOutputs
+
     def Set(self):
         Joins = self.CH.HasItem(self.Cursor)
         if self.Modes.Build:
@@ -198,8 +210,9 @@ class GUI:
                 if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(Component) or (not Params.GUI.Behaviour.StopWireOnJoin) or not Joins):
                     self.StartComponent(Component.__class__)
                 else:
-                    self.Modes.Default()
+                    self.Modes.Default(Message='end of build')
                     self.Draw()
+                self.CheckBoardPins()
             else:
                 self.TmpComponents.add(Component)
         elif self.Modes.Default:
@@ -220,7 +233,7 @@ class GUI:
         if self.Highlighted is None:
             return
         if self.Modes.Build:
-            self.Modes.Default()
+            self.Modes.Default(Message='selection')
         if self.Modes.Default:
             if not self.Highlighted.Selected:
                 self.TmpComponents.update(self.Highlighted.Select())
@@ -247,7 +260,8 @@ class GUI:
             self.CH.Remove(self.TmpComponents)
             self.DisplayFigure.canvas.draw()
             self.TmpComponents = set()
-            self.Modes.Default()
+            self.Modes.Default(Message = 'end of delete')
+            self.CheckBoardPins()
 
     def Rotate(self, var):
         self.Rotation = (self.Rotation + 1) & 0b11
@@ -301,16 +315,28 @@ class GUI:
         else:
             self.MainFrame.Board.Controls.ToggleConnexionButton.configure(image = self._Icons['DotImage'])
 
+    def SetBoardInput(self, Value):
+        self.CH.Input = Value
+        self.DisplayFigure.canvas.draw()
+
+# Loading methods
+
     def LoadGUI(self):
         self._Icons = {}
     
+        def EntryReturnCallback(Entry):
+            self.Modes.Default(Message = f'Entry return by {Entry.Name}')
+            if Entry in self.EntriesCallbacks and Entry.Valid:
+                self.EntriesCallbacks[Entry](Entry.Value)
+        SEntry.EntryReturnCallback = EntryReturnCallback
+
         self.LoadKeys()
 
         self.MainFrame = SFrame(self.MainWindow)
         self.MainFrame.AddFrame("Top_Panel", 0, 0, columnspan = 3)
         self.MainFrame.AddFrame("Library", 1, 0, Side = Tk.TOP)
         self.MainFrame.AddFrame("Board", 1, 1, Side = Tk.TOP)
-        self.MainFrame.AddFrame("Board_IO", 1, 2, Side = Tk.TOP)
+        self.MainFrame.AddFrame("Right_Panel", 1, 2, NoName = True)
         self.MainFrame.AddFrame("Console", 2, 0, columnspan = 3, Side = Tk.LEFT)
 
         self.LoadMenu()
@@ -319,10 +345,18 @@ class GUI:
         self.LoadRightPanel()
         self.LoadLibraryGUI()
 
+        self.MainWidget.focus_set()
+        self.MainWidget.bind('<FocusOut>', lambda e:self.CheckFocusOut())
+
+    def CheckFocusOut(self):
+        Focus = self.MainWidget.focus_get()
+        if not Focus is None and not self.Modes.Text:
+            self.Modes.Text(Message = 'FocusOut')
+
     def LoadKeys(self):
         Controls = Params.GUI.Controls
         self.KeysFunctionsDict = {}
-        self.MainWindow.bind('<Key>', lambda e: self.ConsoleFilter(self.KeysFunctionsDict.get(e.keysym.lower(), {}).get(e.state, Void), e.keysym.lower(), e.state))
+        self.MainWindow.bind('<Key>', lambda e: self.TextFilter(self.KeysFunctionsDict.get(e.keysym.lower(), {}).get(e.state, Void), e.keysym.lower(), e.state))
 
         self.AddControlKey(Controls.Connect, lambda key, mod: self.ToggleConnexion())
         self.AddControlKey(Controls.Close,   lambda key, mod: self.Close(0))
@@ -339,7 +373,7 @@ class GUI:
         for Mode in self.Modes.List:
             if Mode.Key is None:
                 continue
-            self.AddControlKey(Mode.Key, lambda key, mod, Mode = Mode: Mode())
+            self.AddControlKey(Mode.Key, lambda key, mod, Mode = Mode: Mode(Message='Key'))
 
         CTRL = 4
         SHIFT = 1
@@ -349,8 +383,9 @@ class GUI:
         self.AddControlKey('n', lambda key, mod:self.Open(Ask=False), Mod = CTRL)
 
         #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__)) # Override to check key value
-    def ConsoleFilter(self, Callback, Symbol, Modifier):
-        if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5'): # Hardcoded so far, should be taken from Params as well
+    def TextFilter(self, Callback, Symbol, Modifier):
+        #if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5', 'f6'): # Hardcoded so far, should be taken from Params as well
+        if self.Modes.Text and not Symbol in ('escape', 'f4', 'f5', 'f6'): # Hardcoded so far, should be taken from Params as well
             return
         Callback(Symbol, Modifier)
 
@@ -392,12 +427,11 @@ class GUI:
         raise NotImplementedError
 
     def LoadConsole(self):
-        #self.MainFrame.Console.AddWidget(Console.ConsoleWidget, "Console", _locals=locals(), exit_callback=self.MainWindow.destroy)
         ConsoleInstance = ConsoleWidget(self.MainFrame.Console.frame, locals(), self.MainWindow.destroy)
         ConsoleInstance.pack(fill=Tk.BOTH, expand=True)
         self.MainFrame.Console.RemoveDefaultName()
         self.MainFrame.Console.AdvertiseChild(ConsoleInstance, "ConsoleInstance")
-        ConsoleInstance.text.bind('<FocusIn>', lambda e:self.Modes.Console())
+        #ConsoleInstance.text.bind('<FocusIn>', lambda e:self.Modes.Text(Message = 'Console FocusIn'))
 
     def LoadCenterPanel(self):
         self.MainFrame.Board.AddFrame("Controls", Side = Tk.LEFT)
@@ -443,6 +477,8 @@ class GUI:
 
         self.PlotView()
 
+        self.MainWidget = self.DisplayCanvas.get_tk_widget()
+
     def PlotView(self):
         self.Plots = {}
         self.Plots['Cursor'] = self.DisplayAx.plot(0,0, marker = 'o', color = self.Modes.Current.Color)[0]
@@ -481,7 +517,16 @@ class GUI:
         self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "HighlightLabel", row = 1, column = 0, text = "")
 
     def LoadRightPanel(self):
-        pass
+        self.EntriesCallbacks = {}
+
+        self.MainFrame.Right_Panel.AddFrame("Board_Inputs", row = 0, column = 0, columnspan = 2, Border = True, NoName = True)
+        self.BoardInputEntry = SEntry(self.MainFrame.Right_Panel.Board_Inputs.frame, "Board Input", 0, TotalWidth = Params.GUI.RightPanel.Width)
+        self.EntriesCallbacks[self.BoardInputEntry] = self.SetBoardInput
+        self.MainFrame.Right_Panel.AddFrame("Board_Outputs", row = 1, column = 0, columnspan = 2, Border = True, NoName = True)
+        self.BoardOutputLabel = SLabel(self.MainFrame.Right_Panel.Board_Outputs.frame, "Board Output", 0, TotalWidth = Params.GUI.RightPanel.Width)
+
+        self.MainFrame.Right_Panel.AddFrame("Input_Groups", row = 2, column = 0, Border = True, Side = Tk.TOP)
+        self.MainFrame.Right_Panel.AddFrame("Output_Groups", row = 2, column = 1, Border = True, Side = Tk.TOP)
 
     def LoadLibraryGUI(self):
         self.CompToButtonMap = {}
@@ -501,6 +546,7 @@ class GUI:
                     self.AddControlKey(ControlKey, lambda key, mod, CompClass = CompClass: self.StartComponent(CompClass))
                 self.CompToButtonMap[CompClass] = CompFrame.AddWidget(Tk.Button, f"{BookName}.{CompName}", row = row, column = column, text = CompName+Add, height = Params.GUI.Library.ComponentHeight, 
                                                                         command = lambda CompClass = CompClass: self.StartComponent(CompClass))
+
 
     def ColorLibComponent(self, Button):
         if Button == self.CurrentCompButton:

@@ -2,6 +2,7 @@ import numpy as np
 import os
 
 class C:
+    black = 'black'
     grey = 'grey'
     lgrey = 'light grey'
     yellow = 'yellow'
@@ -29,6 +30,8 @@ class Colors:
         class Widget:
             default = C.lgrey
             pressed = C.grey
+            validEntry = C.black
+            wrongEntry = C.red
         Modes = {
             0:C.white,  # Default
             1:C.white,  # Console
@@ -73,6 +76,8 @@ class Params:
             DefaultMargin = 1
             RefLineEvery = 20
             CursorLinesWidth = 1
+        class RightPanel:
+            Width = 80
         class Cursor:
             Marker = 'o'
             DefaultAlpha = 1.

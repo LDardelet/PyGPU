@@ -279,7 +279,7 @@ class BoardPinC(ComponentBase):
         return self.Group.Level
     @Level.setter
     def Level(self, Level):
-        if self.Type == PinDict.BoardInput:
+        if self.Type == PinDict.Input:
             self.Group.SetLevel(Level, self)
         else:
             raise Exception("Attempting to set level of a board output")
@@ -294,14 +294,14 @@ class BoardPinC(ComponentBase):
     def Index(self):
         return self._Index
     @Index.setter
-    def Index(self):
+    def Index(self, Index):
         self._Index = Index
         self.Plots[1].set_text(self.Label)
     @property
     def Name(self):
         return self._Name
     @Name.setter
-    def Name(self):
+    def Name(self, Name):
         self._Name = Name
         self.Plots[1].set_text(self.Label)
 
@@ -312,13 +312,14 @@ class BoardPinC(ComponentBase):
     def Type(self, Value):
         if self._Type == Value:
             return
+        self._Type = Value
         if Value == PinDict.Input:
             self.Group.SetLevel(self.DefinedLevel, self)
         elif Value == PinDict.Output:
             self.Group.RemoveLevelSet(self)
         else:
             raise Exception(f"Wrong {self} type {Value}")
-        self._Type = Value
+        Log(f"{self.Label} {self.CName} type set to {PinDict.PinTypeNames[self.Type]}")
 
     @property
     def Label(self):

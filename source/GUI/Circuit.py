@@ -13,7 +13,7 @@ class ComponentsHandlerC(StorageItem):
         self.StoredAttribute('Components', {})
         self.StoredAttribute('Groups', {})
         self.StoredAttribute('Casings', {})
-        self.StoredAttribute('IO', ({}, {}))
+        self.StoredAttribute('Pins', [])
         self.StoredAttribute('CasingGroup', CasingGroupC())
         self.Start()
 
@@ -79,9 +79,6 @@ class ComponentsHandlerC(StorageItem):
         self.SetComponent(NewComponent)
         NewComponent.Fix()
 
-        if isinstance(NewComponent, ComponentsModule.BoardPinC) and (NewComponent.Group.Level == Levels.Undef):
-            NewComponent.Type = PinDict.Input
-
         self.UpdateRequest(NewComponent)    
         return True
 
@@ -113,6 +110,8 @@ class ComponentsHandlerC(StorageItem):
         self.LinkToOthers(Component)
         if isinstance(Component, ComponentsModule.WireC):
             self.CheckWireMerges(Component)
+        if isinstance(Component, ComponentsModule.BoardPinC):
+            self.AddBoardPin(Component)
 
     def UnsetComponents(self, InputComponents):
         InputComponents = set(InputComponents)
@@ -183,6 +182,47 @@ class ComponentsHandlerC(StorageItem):
                     self.Link(NewComponent, Connexion)
             else:
                 self.AddConnexion((x,y)) # If not, we create it
+
+    def AddBoardPin(self, Pin):
+        Pin.Index = len(self.Pins)
+        if (Pin.Group.Level == Levels.Undef):
+            Pin.Type = PinDict.Input
+            Pin.Side = PinDict.W
+            Pin.Level = (self.Input >> Pin.Index) & 0b1
+        else:
+            Pin.Type = PinDict.Output
+            Pin.Side = PinDict.E
+        self.Pins.append(Pin)
+
+    def SetPinIndex(self, Pin, Index):
+        if Pin.Index == Index:
+            return
+        self.Pins.remove(Pin)
+        self.Pins.insert(Index, Pin)
+        for nPin, Pin in enumerate(self.Pins):
+            Pin.Index = nPin
+
+    @property
+    def Input(self):
+        Input = 0
+        for Pin in reversed(self.Pins): # Use of little-endian norm
+            if Pin.Type == PinDict.Input:
+                Input = (Input << 1) | Pin.Level
+        return Input
+    @Input.setter
+    @Modifies
+    def Input(self, Input):
+        for Pin in self.Pins:
+            if Pin.Type == PinDict.Input:
+                Pin.Level = Input & 0b1
+                Input = Input >> 1
+    @property
+    def Output(self):
+        Output = 0
+        for Pin in reversed(self.Pins): # Use of little-endian norm
+            if Pin.Type == PinDict.Output:
+                Output = (Output << 1) | Pin.Level
+        return Output
 
     def CheckWireMerges(self, W1):
         for x, y in W1.AdvertisedConnexions:
@@ -439,7 +479,11 @@ class GroupC(StorageItem):
             self.MultipleSetWarning()
             self.Level = Levels.Multiple
         if PrevLevel != self.Level:
+            print(" -> Components Update")
             for Component in self.Components:
+                self.TriggerComponentLevel(Component)
+        else:
+            if not Component is None:
                 self.TriggerComponentLevel(Component)
     def RemoveLevelSet(self, Component):
         if not Component in self.SetBy:
@@ -592,6 +636,7 @@ class CLibrary:
         self.AddSpecialStorageClass(ComponentsModule.ComponentPinC)
         self.AddSpecialStorageClass(ComponentsModule.InputPinC)
         self.AddSpecialStorageClass(ComponentsModule.OutputPinC)
+        self.AddSpecialStorageClass(ComponentsModule.BoardPinC)
         self.AddSpecialStorageClass(GroupC)
         self.AddSpecialStorageClass(CasingGroupC)
         self.AddSpecialStorageClass(ComponentsHandlerC)

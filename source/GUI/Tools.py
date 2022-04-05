@@ -2,7 +2,7 @@ import tkinter as Tk
 
 import matplotlib
 from functools import cached_property
-from Console import ConsoleWidget, Log
+from Console import Log
 from Values import Colors, Params
 
 def Void(*args, **kwargs):
@@ -20,16 +20,16 @@ class ModeC:
         self.Color = Colors.GUI.Modes[self.ID]
         if self.Current is None:
             ModeC.Current = self
-    def __call__(self, func = None, Advertise = False): # Both a call and a wrapper
+    def __call__(self, func = None, Message = '', Advertise = False): # Both a call and a wrapper
         if not func is None:
             def Wrap(*args, **kwargs):
                 if not bool(self): # Wrapper only changes if necessary
-                    self()
+                    self(Message = f'wrap of {func.__name__}')
                 func(*args, **kwargs)
             return Wrap
         
         if Advertise:
-            Log(f"Mode {self.Name}")
+            Log(f"Mode {self.Name}" + bool(Message)*f' ({Message})')
         if self.Current == self:
             self.__class__.ReloadProps(self.GUI) # This writing allows to make XProps functions like GUI class methods
             return
@@ -59,7 +59,7 @@ class ModeC:
 class DefaultModeC(ModeC):
     ID = 0
     def SetProps(self, From):
-        if not From == ConsoleModeC:
+        if not From == TextModeC:
             self.ClearTmpComponents()
         self.CheckConnexionToggle()
     def LeaveProps(self):
@@ -67,14 +67,15 @@ class DefaultModeC(ModeC):
     def ReloadProps(self):
         self.ClearTmpComponents()
         self.DisplayFigure.canvas.draw()
-class ConsoleModeC(ModeC):
+class TextModeC(ModeC):
     ID = 1
     def SetProps(self, From):
-        self.MainFrame.Console.ConsoleInstance.text.see(Tk.END)
-        if self.MainWindow.focus_get() != self.MainFrame.Console.ConsoleInstance.text:
+        #if self.MainWindow.focus_get() != self.MainFrame.Console.ConsoleInstance.text:
+        if self.MainWindow.focus_get() == self.MainWidget:
+            self.MainFrame.Console.ConsoleInstance.text.see(Tk.END)
             self.MainFrame.Console.ConsoleInstance.text.focus_set()
     def LeaveProps(self):
-        self.MainWindow.focus_set()
+        self.MainWidget.focus_set()
 class BuildModeC(ModeC):
     ID = 2
     def SetProps(self, From):
@@ -97,11 +98,11 @@ class DeleteModeC(ModeC):
         self.DeleteConfirm()
 class ModesDict:
     Default = DefaultModeC()
-    Console = ConsoleModeC()
+    Text    = TextModeC()
     Build   = BuildModeC()
     Delete  = DeleteModeC()
     def __init__(self):
-        self.List = (self.Default, self.Console, self.Build, self.Delete)
+        self.List = (self.Default, self.Text, self.Build, self.Delete)
     @property
     def Current(self):
         return ModeC.Current
@@ -121,7 +122,7 @@ class SFrame:
         if Name != 'Name':
             self.__dict__[Name] = NewChild
 
-    def AddFrame(self, Name, row=None, column=None, Side = None, Sticky = True, Border = True, NameDisplayed = False, **kwargs):
+    def AddFrame(self, Name, row=None, column=None, Side = None, Sticky = True, Border = True, NameDisplayed = False, NoName = False, **kwargs):
         self.RemoveDefaultName()
 
         if Name in self.Children:
@@ -144,7 +145,8 @@ class SFrame:
             if Sticky:
                 kwargs["fill"] = Tk.BOTH
             NewFrame.frame.pack(side = self.Side, **kwargs)
-        NewFrame.AddWidget(Tk.Label, "Name", 0, 0, text = Name.replace('_', ' '))
+        if not NoName:
+            NewFrame.AddWidget(Tk.Label, "Name", 0, 0, text = Name.replace('_', ' '))
         return NewFrame
 
     def RemoveDefaultName(self):
@@ -174,3 +176,125 @@ class SFrame:
                 kwargs["fill"] = Tk.BOTH
             NewWidget.pack(side  = self.Side, **kwargs)
         return NewWidget
+
+class SEntry:
+    EntryReturnCallback = None
+    def __init__(self, Frame, Name, NBits, TotalWidth):
+        self._Value = 0
+        self._NBits = NBits
+        self.MaxValue = 2**self.NBits
+
+        self.Frame = Frame
+        self.Name = Name
+        self.NameLabel = Tk.Label(Frame, text = f"{self.Name} ({self._NBits} bits)", width = TotalWidth)
+        self.NameLabel.grid(row = 0, column = 0, columnspan = 3, sticky=Tk.EW)
+        self.IntVar = Tk.StringVar(Frame, self.int)
+        self.BinVar = Tk.StringVar(Frame, self.bin)
+        self.HexVar = Tk.StringVar(Frame, self.hex)
+        self.Entries = (Tk.Entry(Frame, textvariable = self.IntVar, width = TotalWidth//3),
+                        Tk.Entry(Frame, textvariable = self.BinVar, width = TotalWidth//3),
+                        Tk.Entry(Frame, textvariable = self.HexVar, width = TotalWidth//3))
+        for nEntry, (Entry, Callback) in enumerate(zip(self.Entries, (self.IntSet, self.BinSet, self.HexSet))):
+            Entry.grid(row = 1, column = nEntry)
+            Entry.bind("<Return>", Callback)
+        self.Frame.bind('<FocusOut>', self.Reset)
+
+    def Reset(self, *args, **kwargs): # avoid unconfirmed changes to be propagated
+        if self.Frame.focus_get() != None:
+            self.Value = self._Value
+
+    @property
+    def NBits(self):
+        return self._NBits
+    @NBits.setter
+    def NBits(self, Value):
+        self._NBits = Value
+        self.MaxValue = 2**self._NBits
+        self.NameLabel.configure(text = f"{self.Name} ({self._NBits} bits)")
+        self.CheckValidity()
+    @property
+    def Valid(self):
+        return self.Value < self.MaxValue
+    @property
+    def Value(self):
+        return self._Value
+    @Value.setter
+    def Value(self, Value):
+        self._Value = Value
+        for (Var, Value) in zip((self.IntVar, self.BinVar, self.HexVar), (self.int, self.bin, self.hex)):
+            if Var.get() != Value:
+                Var.set(Value)
+        self.CheckValidity()
+    @property
+    def int(self):
+        return str(self._Value)
+    def IntSet(self, *args, **kwargs):
+        try:
+            self.Value = int(self.IntVar.get())
+        except ValueError:
+            self.Value = 0
+        self.EntryReturnCallback()
+    @property
+    def bin(self):
+        return format(self._Value, f'#0{2+self.NBits}b')
+    def BinSet(self, *args, **kwargs):
+        try:
+            self.Value = int(self.BinVar.get(), 2)
+        except ValueError:
+            self.Value = 0
+        self.EntryReturnCallback()
+    @property
+    def hex(self):
+        return format(self._Value, f'#0{2+(self.NBits+3)//4}x')
+    def HexSet(self, *args, **kwargs):
+        try:
+            self.Value = int(self.HexVar.get(), 16)
+        except ValueError:
+            self.Value = 0
+        self.EntryReturnCallback()
+    def CheckValidity(self):
+        if self.Valid:
+            Color = Colors.GUI.Widget.validEntry
+        else:
+            Color = Colors.GUI.Widget.wrongEntry
+        for Entry in self.Entries:
+            Entry.configure(fg = Color)
+
+class SLabel:
+    def __init__(self, Frame, Name, NBits, TotalWidth):
+        self._Value = 0
+        self._NBits = NBits
+        self.Frame = Frame
+        self.Name = Name
+        self.NameLabel = Tk.Label(Frame, text = f"{self.Name} ({self._NBits} bits)", width = TotalWidth)
+        self.NameLabel.grid(row = 0, column = 0, columnspan = 3)
+        self.Labels =  (Tk.Label(Frame, text=self.int, width = TotalWidth//3, anchor = Tk.W),
+                        Tk.Label(Frame, text=self.bin, width = TotalWidth//3, anchor = Tk.W),
+                        Tk.Label(Frame, text=self.hex, width = TotalWidth//3, anchor = Tk.W))
+        for nLabel, Label in enumerate(self.Labels):
+            Label.grid(row = 1, column = nLabel)
+
+    @property
+    def NBits(self):
+        return self._NBits
+    @NBits.setter
+    def NBits(self, Value):
+        self._NBits = Value
+        self.NameLabel.configure(text = f"{self.Name} ({self._NBits} bits)")
+    @property
+    def Value(self):
+        return self._Value
+    @Value.setter
+    def Value(self, Value):
+        self._Value = Value
+        for (Label, Value) in zip(self.Labels, (self.int, self.bin, self.hex)):
+            Label.configure(text = Value)
+    @property
+    def int(self):
+        return str(self._Value)
+    @property
+    def bin(self):
+        return format(self._Value, f'#0{2+self.NBits}b')
+    @property
+    def hex(self):
+        return format(self._Value, f'#0{2+(self.NBits+3)//4}x')
