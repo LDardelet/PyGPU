@@ -135,6 +135,8 @@ class ComponentsHandlerC(StorageItem):
                 GroupComponents = {Component}.union(Components.intersection(Group.Components))
                 Components.difference_update(GroupComponents)
                 Group.Split(GroupComponents)
+            if isinstance(Component, ComponentsModule.BoardPinC):
+                self.RemoveBoardPin(Component)
         for Connexion in AffectedConnexions:
             Connexion.UpdateColumn(self.Map[Connexion.Location[0], Connexion.Location[1], :])
             if Connexion.ShouldBeRemoved:
@@ -183,24 +185,45 @@ class ComponentsHandlerC(StorageItem):
             else:
                 self.AddConnexion((x,y)) # If not, we create it
 
+    @property
+    def InputPins(self):
+        return [Pin for Pin in self.Pins if Pin.Type == PinDict.Input]
+    @property
+    def OutputPins(self):
+        return [Pin for Pin in self.Pins if Pin.Type == PinDict.Output]
     def AddBoardPin(self, Pin):
         Pin.Index = len(self.Pins)
         if (Pin.Group.Level == Levels.Undef):
             Pin.Type = PinDict.Input
             Pin.Side = PinDict.W
-            Pin.Level = (self.Input >> Pin.Index) & 0b1
+            Pin.TypeIndex = len(self.InputPins)
+            Pin.Level = (self.Input >> Pin.TypeIndex) & 0b1
         else:
+            Pin.TypeIndex = len(self.OutputPins)
             Pin.Type = PinDict.Output
             Pin.Side = PinDict.E
         self.Pins.append(Pin)
-
-    def SetPinIndex(self, Pin, Index):
-        if Pin.Index == Index:
-            return
+    def RemoveBoardPin(self, Pin):
         self.Pins.remove(Pin)
-        self.Pins.insert(Index, Pin)
+        self.ReloadPinIndices()
+
+    def SetPinIndex(self, Pin, NewIndex, Rule = 'roll'):
+        if Pin.Index == NewIndex:
+            return
+        PreviousIndex = Pin.Index
+        if Rule == 'roll':
+            self.Pins.remove(Pin)
+            self.Pins.insert(NewIndex, Pin)
+        elif Rule == 'switch':
+            self.Pins[NewIndex], self.Pins[PreviousIndex] = self.Pins[PreviousIndex], self.Pins[NewIndex]
+        self.ReloadPinIndices()
+    def ReloadPinIndices(self):
         for nPin, Pin in enumerate(self.Pins):
             Pin.Index = nPin
+        for nPin, Pin in enumerate(self.InputPins):
+            Pin.TypeIndex = nPin
+        for nPin, Pin in enumerate(self.OutputPins):
+            Pin.TypeIndex = nPin
 
     @property
     def Input(self):
@@ -651,6 +674,8 @@ class CLibrary:
 
     def IsWire(self, C): # Checks if class or class instance
         return C == ComponentsModule.WireC or isinstance(C, ComponentsModule.WireC)
+    def IsBoardPin(self, C): # Checks if class or class instance
+        return C == ComponentsModule.BoardPinC or isinstance(C, ComponentsModule.BoardPinC)
     def IsGroup(self, C):
         return isinstance(C, GroupC)
 

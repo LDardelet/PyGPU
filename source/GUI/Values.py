@@ -78,6 +78,7 @@ class Params:
             CursorLinesWidth = 1
         class RightPanel:
             Width = 80
+            PinNameEntryWidth = 5
         class Cursor:
             Marker = 'o'
             DefaultAlpha = 1.
@@ -89,6 +90,8 @@ class Params:
             Connexion = 4
             Casing = 0.4
             CNameFontsize = 15
+            BoardPinBoxLength = 4
+            BoardPinBoxHeight = 1
         class PlotsStyles:
             Wire = '-'
             Pin = '-'
@@ -127,12 +130,28 @@ class Params:
             StopWireOnJoin = True
             DefaultWireBuildMode = 1
             AskDeleteConfirmation = False
+
+_L = Params.GUI.PlotsWidths.BoardPinBoxLength
+_H = Params.GUI.PlotsWidths.BoardPinBoxHeight/2
+
 class PinDict:
     W,E,N,S = 'WENS'
     Input = 0
     Output = 1
     PinTypeNames = {0:'Input',
                     1:'Output'}
+    BoardPinStaticCorners =  (np.array([[0,0],
+                                        [_H, _H], 
+                                        [_L, _H], 
+                                        [_L, -_H], 
+                                        [_H, -_H]]),
+                              np.array([[_L, 0],
+                                        [_L-_H, -_H], 
+                                        [0, -_H], 
+                                        [0, _H], 
+                                        [_L-_H, _H]]))
+
+
 Params.Board.Size = Params.Board.Size - (Params.Board.Size & 1)
 Params.Board.Max = Params.Board.Size // 2
 Params.GUI.DataAbsPath = os.path.realpath(os.path.expanduser(Params.GUI.DataFolder))

@@ -11,7 +11,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 
 from Console import ConsoleWidget, Log, LogSuccess, LogWarning, LogError
 from Values import Colors, Params, PinDict
-from Tools import Void, ModesDict, ModeC, SFrame, SEntry, SLabel
+from Tools import Void, ModesDict, ModeC, SFrame, SEntry, SLabel, SPinEntry, BoardIOWidgetBase
 import Circuit
 import Storage
 
@@ -86,6 +86,7 @@ class GUI:
         self.SetupPins = {}
 
         self.SetView()
+        self.CheckBoardPins()
 
     def SetTitle(self):
         if self.FH.Filename is None:
@@ -174,30 +175,41 @@ class GUI:
         self.DisplayAx.set_xlim(self.LeftBotLoc[0],self.LeftBotLoc[0]+self.Size)
         self.DisplayAx.set_ylim(self.LeftBotLoc[1],self.LeftBotLoc[1]+self.Size)
 
-    def SetWireBuildMode(self, mode=None):
-        if mode is None:
-            mode = 1-self.Library.Wire.BuildMode
+    def SetWireBuildMode(self, mode):
         self.WireButtons[mode].configure(background = Colors.GUI.Widget.pressed)
         self.WireButtons[1-mode].configure(background = Colors.GUI.Widget.default)
-        self.Library.Wire.BuildMode = mode
-        if self.Modes.Build:
-            for Component in self.TmpComponents:
-                if self.Library.IsWire(Component):
-                    Component.SetBuildMode(mode)
-            self.Draw()
+        if mode != self.Library.Wire.BuildMode:
+            self.Library.Wire.BuildMode = mode
+            if self.Modes.Build:
+                for Component in self.TmpComponents:
+                    if self.Library.IsWire(Component):
+                        Component.Switch()
+                self.Draw()
 
     def CheckBoardPins(self):
-        NInputs = 0
-        NOutputs = 0
+        for Pin, PinEntry in list(self.SetupPins.items()):
+            if Pin not in self.CH.Pins:
+                if Pin.Type == PinDict.Input or PinEntry.Type != Pin.Type:
+                    self.MainFrame.Right_Panel.Input_Pins.Destroy(f"PinFrame{Pin.ID}")
+                else:
+                    self.MainFrame.Right_Panel.Output_Pins.Destroy(f"PinFrame{Pin.ID}")
+                del self.SetupPins[Pin]
+            else: # We ensure the pin is in the right location
+                PinEntry.UpdateIndices()
         for Pin in self.CH.Pins:
-            if Pin.Type == PinDict.Input:
-                NInputs += 1
-            else:
-                NOutputs += 1
             if Pin not in self.SetupPins:
-                pass
-        self.BoardInputEntry.NBits = NInputs
-        self.BoardOutputLabel.NBits = NOutputs
+                self.AddBoardPin(Pin)
+        self.BoardInputEntry.NBits = len(self.CH.InputPins)
+        self.BoardOutputLabel.NBits = len(self.CH.OutputPins)
+
+    def AddBoardPin(self, Pin):
+        if Pin.Type == PinDict.Input:
+            PinFrame = self.MainFrame.Right_Panel.Input_Pins.AddFrame(f"PinFrame{Pin.ID}", row = Pin.TypeIndex+1, column = 0, Border = True, NoName = True)
+        else:
+            PinFrame = self.MainFrame.Right_Panel.Output_Pins.AddFrame(f"PinFrame{Pin.ID}", row = Pin.TypeIndex+1, column = 0, Border = True, NoName = True)
+        PinEntry = SPinEntry(PinFrame.frame, Pin)
+        self.SetupPins[Pin] = PinEntry
+        self.BoardIOWidgets.add(PinEntry)
 
     def Set(self):
         Joins = self.CH.HasItem(self.Cursor)
@@ -222,9 +234,10 @@ class GUI:
     def Switch(self):
         if self.Modes.Build:
             for Component in self.TmpComponents:
+                Component.Switch()
                 if self.Library.IsWire(Component):
-                    self.SetWireBuildMode()
-                    break
+                    self.SetWireBuildMode(self.Library.Wire.BuildMode)
+            self.DisplayFigure.canvas.draw()
         elif self.Modes.Default:
             self.NextHighlight()
             self.DisplayFigure.canvas.draw()
@@ -315,8 +328,10 @@ class GUI:
         else:
             self.MainFrame.Board.Controls.ToggleConnexionButton.configure(image = self._Icons['DotImage'])
 
-    def SetBoardInput(self, Value):
-        self.CH.Input = Value
+    def SetBoardInput(self, Level):
+        self.CH.Input = Level # Only access point to CH for input modification
+        for BoardIOWidget in self.BoardIOWidgets:
+            BoardIOWidget.Pull(Level)
         self.DisplayFigure.canvas.draw()
 
 # Loading methods
@@ -324,11 +339,14 @@ class GUI:
     def LoadGUI(self):
         self._Icons = {}
     
-        def EntryReturnCallback(Entry):
-            self.Modes.Default(Message = f'Entry return by {Entry.Name}')
-            if Entry in self.EntriesCallbacks and Entry.Valid:
-                self.EntriesCallbacks[Entry](Entry.Value)
-        SEntry.EntryReturnCallback = EntryReturnCallback
+        def ReturnCallback(Entry):
+            self.Modes.Default(Message = f'Entry return by {Entry}')
+            self.Draw()
+        def LevelModificationCallback(Entry):
+            self.SetBoardInput(Entry.Push(self.CH.Input))
+        BoardIOWidgetBase.ReturnCallback = ReturnCallback
+        BoardIOWidgetBase.LevelModificationCallback = LevelModificationCallback
+        
 
         self.LoadKeys()
 
@@ -517,16 +535,15 @@ class GUI:
         self.MainFrame.Board.DisplayToolbar.Labels.AddWidget(Tk.Label, "HighlightLabel", row = 1, column = 0, text = "")
 
     def LoadRightPanel(self):
-        self.EntriesCallbacks = {}
-
         self.MainFrame.Right_Panel.AddFrame("Board_Inputs", row = 0, column = 0, columnspan = 2, Border = True, NoName = True)
-        self.BoardInputEntry = SEntry(self.MainFrame.Right_Panel.Board_Inputs.frame, "Board Input", 0, TotalWidth = Params.GUI.RightPanel.Width)
-        self.EntriesCallbacks[self.BoardInputEntry] = self.SetBoardInput
+        self.BoardInputEntry = SEntry(self.MainFrame.Right_Panel.Board_Inputs.frame, "Board Input", NBits = 0, BitStart = 0, TotalWidth = Params.GUI.RightPanel.Width)
         self.MainFrame.Right_Panel.AddFrame("Board_Outputs", row = 1, column = 0, columnspan = 2, Border = True, NoName = True)
-        self.BoardOutputLabel = SLabel(self.MainFrame.Right_Panel.Board_Outputs.frame, "Board Output", 0, TotalWidth = Params.GUI.RightPanel.Width)
+        self.BoardOutputLabel = SLabel(self.MainFrame.Right_Panel.Board_Outputs.frame, "Board Output", NBits = 0, BitStart = 0, TotalWidth = Params.GUI.RightPanel.Width)
 
-        self.MainFrame.Right_Panel.AddFrame("Input_Groups", row = 2, column = 0, Border = True, Side = Tk.TOP)
-        self.MainFrame.Right_Panel.AddFrame("Output_Groups", row = 2, column = 1, Border = True, Side = Tk.TOP)
+        self.BoardIOWidgets = {self.BoardInputEntry, self.BoardOutputLabel}
+
+        self.MainFrame.Right_Panel.AddFrame("Input_Pins", row = 2, column = 0, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
+        self.MainFrame.Right_Panel.AddFrame("Output_Pins", row = 2, column = 1, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
 
     def LoadLibraryGUI(self):
         self.CompToButtonMap = {}
@@ -546,7 +563,6 @@ class GUI:
                     self.AddControlKey(ControlKey, lambda key, mod, CompClass = CompClass: self.StartComponent(CompClass))
                 self.CompToButtonMap[CompClass] = CompFrame.AddWidget(Tk.Button, f"{BookName}.{CompName}", row = row, column = column, text = CompName+Add, height = Params.GUI.Library.ComponentHeight, 
                                                                         command = lambda CompClass = CompClass: self.StartComponent(CompClass))
-
 
     def ColorLibComponent(self, Button):
         if Button == self.CurrentCompButton:

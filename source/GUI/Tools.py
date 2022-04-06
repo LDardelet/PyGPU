@@ -3,7 +3,7 @@ import tkinter as Tk
 import matplotlib
 from functools import cached_property
 from Console import Log
-from Values import Colors, Params
+from Values import Colors, Params, PinDict
 
 def Void(*args, **kwargs):
     pass
@@ -108,32 +108,35 @@ class ModesDict:
         return ModeC.Current
 
 class SFrame:
+    Prefix = 'C_'
+    DefaultLabelName = 'C_DefaultLabelName'
     def __init__(self, frame, Name="Main", Side = None, NameDisplayed = False):
         self.frame = frame
         self.Name = Name
-        self.Children = {}
         self.Side = Side
         self.NameDisplayed = NameDisplayed
         
     def AdvertiseChild(self, NewChild, Name):
-        if Name in self.Children:
+        if hasattr(self, Name):
             raise Exception("Frame name already taken")
-        self.Children[Name] = NewChild
-        if Name != 'Name':
-            self.__dict__[Name] = NewChild
+        if Name[:2] != self.Prefix:
+            Name = self.Prefix + Name
+        setattr(self, Name, NewChild)
 
-    def AddFrame(self, Name, row=None, column=None, Side = None, Sticky = True, Border = True, NameDisplayed = False, NoName = False, **kwargs):
+    def __getattr__(self, Key):
+        if Key[:2] != self.Prefix:
+            return getattr(self, self.Prefix+Key)
+        raise AttributeError(f"{Key.split(self.Prefix)[-1]} is not an attribute of {self} nor a children name")
+
+    def AddFrame(self, Name, row=None, column=None, Side = None, Sticky = True, Border = True, NameDisplayed = False, NoName = False, Width = None, **kwargs):
         self.RemoveDefaultName()
 
-        if Name in self.Children:
-            raise Exception("Frame name already taken")
         FrameKwargs = {}
         if Border:
             FrameKwargs["highlightbackground"]="black"
             FrameKwargs["highlightthickness"]=2
         NewFrame = SFrame(Tk.Frame(self.frame, **FrameKwargs), Name, Side = Side, NameDisplayed = NameDisplayed)
-        self.Children[Name] = NewFrame
-        self.__dict__[Name] = NewFrame
+        self.AdvertiseChild(NewFrame, Name)
 
         if self.Side is None:
             if Sticky:
@@ -145,25 +148,38 @@ class SFrame:
             if Sticky:
                 kwargs["fill"] = Tk.BOTH
             NewFrame.frame.pack(side = self.Side, **kwargs)
-        if not NoName:
-            NewFrame.AddWidget(Tk.Label, "Name", 0, 0, text = Name.replace('_', ' '))
+        LabelKwargs = {}
+        if not Width is None:
+            LabelKwargs['width'] = Width
+
+        NewFrame.AddWidget(Tk.Label, self.DefaultLabelName, 0, 0, text = Name.replace('_', ' ') * (1-NoName), **LabelKwargs)
         return NewFrame
 
+    def Destroy(self, ChildName):
+        if ChildName[:2] != self.Prefix:
+            ChildName = self.Prefix + ChildName
+        Child = getattr(self, ChildName)
+        if Child.__class__ == self.__class__:
+            for WidgetChild in Child.frame.winfo_children():
+                WidgetChild.destroy()
+            Child.frame.destroy()
+        else:
+            Child.destroy()
+        delattr(self, ChildName)
+
     def RemoveDefaultName(self):
-        if "Name" in self.Children and not self.NameDisplayed:
-            self.Children["Name"].destroy()
-            del self.Children["Name"]
+        if hasattr(self, self.DefaultLabelName) and not self.NameDisplayed:
+            getattr(self, self.DefaultLabelName).destroy()
+            delattr(self, self.DefaultLabelName)
 
     def AddWidget(self, WidgetClass, Name = "", row=None, column=None, Sticky = True, **kwargs):
         self.RemoveDefaultName()
 
         if WidgetClass == Tk.Button:
             kwargs['background'] = Colors.GUI.Widget.default
-        if Name != "" and Name in self.Children:
-            raise Exception("Widget name already taken")
         NewWidget = WidgetClass(self.frame, **kwargs)
-        self.Children[Name] = NewWidget
-        self.__dict__[Name] = NewWidget
+        if Name:
+            self.AdvertiseChild(NewWidget, Name)
         kwargs = {}
         if self.Side is None:
             if Sticky:
@@ -177,81 +193,116 @@ class SFrame:
             NewWidget.pack(side  = self.Side, **kwargs)
         return NewWidget
 
-class SEntry:
-    EntryReturnCallback = None
-    def __init__(self, Frame, Name, NBits, TotalWidth):
-        self._Value = 0
-        self._NBits = NBits
-        self.MaxValue = 2**self.NBits
+    def __repr__(self):
+        return f"SFrame {self.Name}"
 
-        self.Frame = Frame
+class BoardIOWidgetBase:
+    ReturnCallback = None
+    LevelModificationCallback = None
+    Mask = None
+    BitStart = None
+    def Push(self, PreviousBoardLevel):
+        return (PreviousBoardLevel & ~self.Mask) | (self.Level << self.BitStart)
+    def Pull(self, NewBoardLevel):
+        self.Level = (NewBoardLevel & self.Mask) >> self.BitStart
+
+class SEntry(BoardIOWidgetBase):
+    def __init__(self, frame, Name, NBits, BitStart, TotalWidth):
+        self._Level = 0
+        self._NBits = NBits
+        self._BitStart = BitStart
+        self.UpdateMask()
+        self.MaxLevel = 2**self.NBits
+
+        self.frame = frame
         self.Name = Name
-        self.NameLabel = Tk.Label(Frame, text = f"{self.Name} ({self._NBits} bits)", width = TotalWidth)
+        self.NameLabel = Tk.Label(frame, text = f"{self.Name} ({self._NBits} bits)", width = TotalWidth)
         self.NameLabel.grid(row = 0, column = 0, columnspan = 3, sticky=Tk.EW)
-        self.IntVar = Tk.StringVar(Frame, self.int)
-        self.BinVar = Tk.StringVar(Frame, self.bin)
-        self.HexVar = Tk.StringVar(Frame, self.hex)
-        self.Entries = (Tk.Entry(Frame, textvariable = self.IntVar, width = TotalWidth//3),
-                        Tk.Entry(Frame, textvariable = self.BinVar, width = TotalWidth//3),
-                        Tk.Entry(Frame, textvariable = self.HexVar, width = TotalWidth//3))
+        self.IntVar = Tk.StringVar(frame, self.int)
+        self.BinVar = Tk.StringVar(frame, self.bin)
+        self.HexVar = Tk.StringVar(frame, self.hex)
+        self.Entries = (Tk.Entry(frame, textvariable = self.IntVar, width = TotalWidth//3),
+                        Tk.Entry(frame, textvariable = self.BinVar, width = TotalWidth//3),
+                        Tk.Entry(frame, textvariable = self.HexVar, width = TotalWidth//3))
         for nEntry, (Entry, Callback) in enumerate(zip(self.Entries, (self.IntSet, self.BinSet, self.HexSet))):
             Entry.grid(row = 1, column = nEntry)
             Entry.bind("<Return>", Callback)
-        self.Frame.bind('<FocusOut>', self.Reset)
+        self.frame.bind('<FocusOut>', self.Reset)
 
     def Reset(self, *args, **kwargs): # avoid unconfirmed changes to be propagated
-        if self.Frame.focus_get() != None:
-            self.Value = self._Value
+        if self.frame.focus_get() != None:
+            self.UpdateRepresentations()
 
     @property
     def NBits(self):
         return self._NBits
     @NBits.setter
-    def NBits(self, Value):
-        self._NBits = Value
-        self.MaxValue = 2**self._NBits
+    def NBits(self, NBits):
+        self._NBits = NBits
+        self.UpdateMask()
+        self.MaxLevel = 2**self._NBits
         self.NameLabel.configure(text = f"{self.Name} ({self._NBits} bits)")
         self.CheckValidity()
     @property
-    def Valid(self):
-        return self.Value < self.MaxValue
+    def BitStart(self):
+        return self._BitStart
+    @BitStart.setter
+    def BitStart(self, BitStart):
+        self._BitStart = BitStart
+        self.UpdateMask()
+    def UpdateMask(self):
+        self.Mask = ((1 << self.NBits) - 1) << self.BitStart
+
     @property
-    def Value(self):
-        return self._Value
-    @Value.setter
-    def Value(self, Value):
-        self._Value = Value
-        for (Var, Value) in zip((self.IntVar, self.BinVar, self.HexVar), (self.int, self.bin, self.hex)):
-            if Var.get() != Value:
-                Var.set(Value)
+    def Level(self):
+        return self._Level
+    @Level.setter
+    def Level(self, Level):
+        self._Level = Level
+        self.UpdateRepresentations()
         self.CheckValidity()
+    def UpdateRepresentations(self):
+        for (Var, Representation) in zip((self.IntVar, self.BinVar, self.HexVar), (self.int, self.bin, self.hex)):
+            if Var.get() != Representation:
+                Var.set(Representation)
+
     @property
     def int(self):
-        return str(self._Value)
+        return str(self._Level)
     def IntSet(self, *args, **kwargs):
         try:
-            self.Value = int(self.IntVar.get())
+            self.Level = int(self.IntVar.get())
         except ValueError:
-            self.Value = 0
-        self.EntryReturnCallback()
+            self.Level = 0
+        self.ReturnCallback()
+        if self.Valid:
+            self.LevelModificationCallback()
     @property
     def bin(self):
-        return format(self._Value, f'#0{2+self.NBits}b')
+        return format(self._Level, f'#0{2+self.NBits}b')
     def BinSet(self, *args, **kwargs):
         try:
-            self.Value = int(self.BinVar.get(), 2)
+            self.Level = int(self.BinVar.get(), 2)
         except ValueError:
-            self.Value = 0
-        self.EntryReturnCallback()
+            self.Level = 0
+        self.ReturnCallback()
+        if self.Valid:
+            self.LevelModificationCallback()
     @property
     def hex(self):
-        return format(self._Value, f'#0{2+(self.NBits+3)//4}x')
+        return format(self._Level, f'#0{2+(self.NBits+3)//4}x')
     def HexSet(self, *args, **kwargs):
         try:
-            self.Value = int(self.HexVar.get(), 16)
+            self.Level = int(self.HexVar.get(), 16)
         except ValueError:
-            self.Value = 0
-        self.EntryReturnCallback()
+            self.Level = 0
+        self.ReturnCallback()
+        if self.Valid:
+            self.LevelModificationCallback()
+
+    @property
+    def Valid(self):
+        return self.Level < self.MaxLevel
     def CheckValidity(self):
         if self.Valid:
             Color = Colors.GUI.Widget.validEntry
@@ -259,18 +310,21 @@ class SEntry:
             Color = Colors.GUI.Widget.wrongEntry
         for Entry in self.Entries:
             Entry.configure(fg = Color)
+    def __repr__(self):
+        return self.Name
 
-class SLabel:
-    def __init__(self, Frame, Name, NBits, TotalWidth):
-        self._Value = 0
+class SLabel(BoardIOWidgetBase):
+    def __init__(self, frame, Name, NBits, BitStart, TotalWidth):
+        self._Level = 0
         self._NBits = NBits
-        self.Frame = Frame
+        self._BitStart = BitStart
+        self.frame = frame
         self.Name = Name
-        self.NameLabel = Tk.Label(Frame, text = f"{self.Name} ({self._NBits} bits)", width = TotalWidth)
+        self.NameLabel = Tk.Label(frame, text = f"{self.Name} ({self._NBits} bits)", width = TotalWidth)
         self.NameLabel.grid(row = 0, column = 0, columnspan = 3)
-        self.Labels =  (Tk.Label(Frame, text=self.int, width = TotalWidth//3, anchor = Tk.W),
-                        Tk.Label(Frame, text=self.bin, width = TotalWidth//3, anchor = Tk.W),
-                        Tk.Label(Frame, text=self.hex, width = TotalWidth//3, anchor = Tk.W))
+        self.Labels =  (Tk.Label(frame, text=self.int, width = TotalWidth//3, anchor = Tk.W),
+                        Tk.Label(frame, text=self.bin, width = TotalWidth//3, anchor = Tk.W),
+                        Tk.Label(frame, text=self.hex, width = TotalWidth//3, anchor = Tk.W))
         for nLabel, Label in enumerate(self.Labels):
             Label.grid(row = 1, column = nLabel)
 
@@ -278,23 +332,89 @@ class SLabel:
     def NBits(self):
         return self._NBits
     @NBits.setter
-    def NBits(self, Value):
-        self._NBits = Value
+    def NBits(self, NBits):
+        self._NBits = NBits
+        self.UpdateMask()
         self.NameLabel.configure(text = f"{self.Name} ({self._NBits} bits)")
     @property
-    def Value(self):
-        return self._Value
-    @Value.setter
-    def Value(self, Value):
-        self._Value = Value
-        for (Label, Value) in zip(self.Labels, (self.int, self.bin, self.hex)):
-            Label.configure(text = Value)
+    def BitStart(self):
+        return self._BitStart
+    @BitStart.setter
+    def BitStart(self, BitStart):
+        self._BitStart = BitStart
+        self.UpdateMask()
+    def UpdateMask(self):
+        self.Mask = ((1 << self.NBits) - 1) << self.BitStart
+
+    @property
+    def Level(self):
+        return self._Level
+    @Level.setter
+    def Level(self, Level):
+        self._Level = Level
+        for (Label, Representation) in zip(self.Labels, (self.int, self.bin, self.hex)):
+            Label.configure(text = Representation)
     @property
     def int(self):
-        return str(self._Value)
+        return str(self._Level)
     @property
     def bin(self):
-        return format(self._Value, f'#0{2+self.NBits}b')
+        return format(self._Level, f'#0{2+self.NBits}b')
     @property
     def hex(self):
-        return format(self._Value, f'#0{2+(self.NBits+3)//4}x')
+        return format(self._Level, f'#0{2+(self.NBits+3)//4}x')
+
+class SPinEntry(BoardIOWidgetBase):
+    def __init__(self, frame, Pin):
+        self.frame = frame
+        self.Pin = Pin
+
+        self._Level = self.Pin.Level
+        self.Type = self.Pin.Type
+
+        self.IDLabel = Tk.Label(frame, text = self.Pin.Label)
+        self.IDLabel.grid(column = 0, row = 0)
+        self.NameVar = Tk.StringVar(frame, self.Pin.Name)
+        self.NameEntry = Tk.Entry(frame, textvariable = self.NameVar, width = Params.GUI.RightPanel.PinNameEntryWidth)
+        self.NameEntry.grid(column = 0, row = 1)
+        self.NameEntry.bind("<Return>", self.SetName)
+        self.frame.bind('<FocusOut>', self.Reset)
+
+        self.SetButton = Tk.Button(frame, bg = Colors.Component.Levels[self.Level], activebackground = Colors.Component.Levels[self.Level], command = self.Switch)
+        self.SetButton.grid(column = 1, row = 0, rowspan = 2)
+        if self.Type == PinDict.Output:
+            self.SetButton.configure(state = Tk.DISABLED)
+
+    @property
+    def BitStart(self):
+        return self.Pin.TypeIndex
+    @property
+    def Mask(self):
+        return 1 << self.BitStart
+
+    @property
+    def Level(self):
+        return self._Level
+    @Level.setter
+    def Level(self, Level):
+        self._Level = Level
+        self.SetButton.configure(bg = Colors.Component.Levels[self.Level])
+        self.SetButton.configure(activebackground = Colors.Component.Levels[self.Level])
+
+    def UpdateIndices(self):
+        self.frame.grid(row = self.Pin.TypeIndex+1, column = 0)
+        self.IDLabel['text'] = self.Pin.Label
+
+    def Switch(self):
+        self.Level = 1 - self.Level
+        self.LevelModificationCallback()
+
+    def SetName(self, *args, **kwargs):
+        self.Pin.Name = self.NameVar.get()[:Params.GUI.RightPanel.PinNameEntryWidth]
+        self.IDLabel['text'] = self.Pin.Label
+        self.ReturnCallback()
+    def Reset(self, *args, **kwargs):
+        if self.frame.focus_get() != None and self.NameVar.get() != self.Pin.Name:
+            self.NameVar.set(self.Pin.Name)
+    def __repr__(self):
+        return f"{self.Pin.Label} PinEntry"

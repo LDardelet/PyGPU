@@ -95,9 +95,11 @@ class ComponentBase(StorageItem):
             Factor = Params.GUI.PlotsWidths.HighlightFactor
         else:
             Factor = 1
-        for Plot in self.HighlightPlots:
-            Plot.set_linewidth(self.DefaultLinewidth*Factor)
-            Plot.set_markersize(self.DefaultMarkersize*Factor)
+        for Plot, InitialLinewidth, InitialMarkersize in self.HighlightPlots:
+            if InitialLinewidth:
+                Plot.set_linewidth(InitialLinewidth*Factor)
+            if InitialMarkersize:
+                Plot.set_markersize(InitialMarkersize*Factor)
         return
     @Parenting
     def Fix(self):
@@ -131,6 +133,8 @@ class ComponentBase(StorageItem):
     @property
     def CanFix(self): # Property that ensures all condition have been checked for this particular component to be fixed
         return True
+    def Switch(self):
+        pass
     def Drag(self, Cursor):
         pass
     def PlotInit(self):
@@ -166,15 +170,7 @@ class ComponentBase(StorageItem):
         else:
             self.NeutralPlots.append(Plot)
         if Highlight:
-            self.HighlightPlots.append(Plot)
-    def circle(self, *args, LevelPlot = True, **kwargs):
-        C = plt.Circle(*args, **kwargs)
-        self.Plots.append(C)
-        self.Display.add_patch(C)
-        if LevelPlot:
-            self.LevelsPlots.append(C)
-        else:
-            self.NeutralPlots.append(C)
+            self.HighlightPlots.append((Plot, kwargs.get('linewidth', self.DefaultLinewidth), kwargs.get('markersize', self.DefaultMarkersize)))
     def text(self, *args, LevelPlot = False, **kwargs): # Cannot highlight text, would get messy
         Text = self.Display.text(*args, **kwargs)
         self.Plots.append(Text)
@@ -247,8 +243,6 @@ class ComponentBase(StorageItem):
         return f"{self.Book}.{self.CName}"
 
 class BoardPinC(ComponentBase):
-    DefaultLinewidth = Params.GUI.PlotsWidths.Pin
-    DefaultMarkersize = 0
     CName = "Board Pin"
     LibRef = "BoardPin"
     def __init__(self, Location, Rotation):
@@ -258,18 +252,42 @@ class BoardPinC(ComponentBase):
         self.StoredAttribute('_PinLabelRule', 0b11)
         self.StoredAttribute('Side', None)
         self.StoredAttribute('_Index', None)
+        self.StoredAttribute('TypeIndex', None)
         self.StoredAttribute('_Name', '')
 
         self.Start()
 
     def PlotInit(self):
+        Color, Alpha = self.Color, self.Alpha
+        self.plot(*np.zeros((2,2), dtype = int), color = Color, linestyle = Params.GUI.PlotsStyles.Pin, linewidth = Params.GUI.PlotsWidths.Pin, alpha = Alpha)
+        self.text(*np.zeros(2, dtype = int), s=self.Label, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.Rotation+2))
+
+        for BoxSide in range(5):
+            self.plot(*np.zeros((2,2), dtype = int), color = Color, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = Params.GUI.PlotsWidths.Casing, alpha = Alpha)
+        self.UpdateLocation()
+    def UpdateLocation(self):
         Loc = self.Location
         BLoc = self.PinBaseLocation
-        Color, Alpha = self.Color, self.Alpha
-        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Color, linestyle = Params.GUI.PlotsStyles.Pin, linewidth = self.DefaultLinewidth, alpha = Alpha)
-        self.text(*self.TextLocation, s=self.Label, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.Rotation))
-        self.circle(BLoc, radius = 0.5, color = Color, fill = False, linewidth = self.DefaultLinewidth, alpha = Alpha)
+        self.Plots[0].set_data([Loc[0], BLoc[0]], [Loc[1], BLoc[1]])
+        self.Plots[1].set_position(self.TextLocation)
+        self.Plots[1].set(**PinNameDict(self.Rotation+2))
 
+        LabelCorners = self.LabelCorners
+        for nCorner in range(5):
+            self.Plots[2+nCorner].set_data(*LabelCorners[(nCorner, (nCorner+1)%5),:].T)
+
+    def Switch(self):
+        if not self.State.Building:
+            raise Exception(f"{self} switched while not building")
+        self.Type = 1-self.Type
+
+    @property
+    def LabelCorners(self):
+        Corners = np.zeros((5,2))
+        for nCorner in range(5):
+            Corners[nCorner, :] = RotateOffset(PinDict.BoardPinStaticCorners[self.Type][nCorner, :], self.Rotation+2) + self.PinBaseLocation
+        return Corners
+    
     def Drag(self, Cursor):
         self.Location = np.array(Cursor)
         self.UpdateLocation()
@@ -313,12 +331,16 @@ class BoardPinC(ComponentBase):
         if self._Type == Value:
             return
         self._Type = Value
+        self.UpdateLocation()
+        if self.State.Building:
+            return
         if Value == PinDict.Input:
             self.Group.SetLevel(self.DefinedLevel, self)
         elif Value == PinDict.Output:
             self.Group.RemoveLevelSet(self)
         else:
             raise Exception(f"Wrong {self} type {Value}")
+        self.UpdateLocation()
         Log(f"{self.Label} {self.CName} type set to {PinDict.PinTypeNames[self.Type]}")
 
     @property
@@ -330,14 +352,6 @@ class BoardPinC(ComponentBase):
     @property
     def TextLocation(self):
         return self.Location + RotateOffset(np.array([-2, 0]), self.Rotation)
-
-    def UpdateLocation(self):
-        Loc = self.Location
-        BLoc = self.PinBaseLocation
-        self.Plots[0].set_data([Loc[0], BLoc[0]], [Loc[1], BLoc[1]])
-        self.Plots[1].set_position(self.TextLocation)
-        self.Plots[1].set(**PinNameDict(self.Rotation))
-        self.Plots[2].set_center(BLoc)
 
     @property
     def AdvertisedLocations(self):
@@ -354,7 +368,6 @@ class BoardPinC(ComponentBase):
         return f"{PinDict.PinTypeNames[self.Type]} {self.CName} " + self.Label
 
 class CasedComponentC(ComponentBase): # Template to create any type of component
-    DefaultLinewidth = Params.GUI.PlotsWidths.Casing
     InputPinsDef = None
     OutputPinsDef = None
     Callback = None
@@ -477,7 +490,7 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
     def PlotInit(self):
         Color, Alpha = self.Color, self.Alpha
         for Xs, Ys in self.CasingSides:
-            self.plot(Xs, Ys, color = Color, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = self.DefaultLinewidth, alpha = Alpha, LevelPlot = False)
+            self.plot(Xs, Ys, color = Color, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = Params.GUI.PlotsWidths.Casing, alpha = Alpha, LevelPlot = False)
         self.text(*self.TextLocation, s = (self.CName, self.Symbol)[bool(self.Symbol)], color = Color, va = 'center', ha = 'center', rotation = self.TextRotation, alpha = Alpha)
 
     @property
@@ -511,8 +524,6 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
             return np.zeros((0,3), dtype = int)
 
 class ComponentPinC(ComponentBase):
-    DefaultLinewidth = Params.GUI.PlotsWidths.Pin
-    DefaultMarkersize = 0
     CName = "Pin"
     LibRef = "Pin"
     def __init__(self, Parent, Side, Index, Name = ''):
@@ -554,7 +565,7 @@ class ComponentPinC(ComponentBase):
         Loc = self.Location
         BLoc = self.PinBaseLocation
         Color, Alpha = self.Color, self.Alpha
-        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Color, linestyle = Params.GUI.PlotsStyles.Pin, linewidth = self.DefaultLinewidth, alpha = Alpha)
+        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Color, linestyle = Params.GUI.PlotsStyles.Pin, linewidth = Params.GUI.PlotsWidths.Pin, alpha = Alpha)
         self.text(*self.TextLocation, s=self.Label, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.Rotation + self.BaseRotation))
 
     def UpdateLocation(self):
@@ -647,9 +658,8 @@ def RotateOffset(Offset, Rotation): # Use LRU ?
         return np.array([Offset[1], -Offset[0]])
 
 class WireC(ComponentBase):
-    DefaultLinewidth = Params.GUI.PlotsWidths.Wire
-    DefaultMarkersize = 0
     CName = "Wire"
+    BuildMode = None
     def __init__(self, Location, Rotation, WireParent=None):
         super().__init__(Location, Rotation)
         self.StoredAttribute('BuildMode', self.__class__.BuildMode)
@@ -662,13 +672,16 @@ class WireC(ComponentBase):
             self.WireChild = None
             self.WireParent = WireParent
 
-    def SetBuildMode(self, mode):
-        self.BuildMode = mode
+    def Switch(self):
+        if not self.State.Building:
+            raise Exception(f"{self} switched while not building")
+        self.__class__.BuildMode = 1 - self.__class__.BuildMode
+        self.BuildMode = self.__class__.BuildMode
         self.UpdateLocation()
 
     def PlotInit(self):
         Color, Alpha = self.Color, self.Alpha
-        self.plot(self.Location[:,0], self.Location[:,1], color = Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = self.DefaultLinewidth, alpha = Alpha)
+        self.plot(self.Location[:,0], self.Location[:,1], color = Color, linestyle = Params.GUI.PlotsStyles.Wire, linewidth = Params.GUI.PlotsWidths.Wire, alpha = Alpha)
 
     @property
     def Location(self):
@@ -787,8 +800,6 @@ class WireC(ComponentBase):
 class ConnexionC(ComponentBase):
     CName = "Connexion"
     LibRef = "Connexion"
-    DefaultLinewidth = 0
-    DefaultMarkersize = Params.GUI.PlotsWidths.Connexion
     def __init__(self, Location, Column):
         super().__init__(Location)
         self.StoredAttribute('Column', np.array(Column[:8]))
@@ -798,7 +809,7 @@ class ConnexionC(ComponentBase):
 
     def PlotInit(self):
         Color, Alpha = self.Color, self.Alpha
-        self.plot(self.Location[0], self.Location[1], Highlight = False, marker = Params.GUI.PlotsStyles.Connexion, markersize = self.DefaultMarkersize, color = Color, alpha = self.Alpha)
+        self.plot(self.Location[0], self.Location[1], Highlight = False, marker = Params.GUI.PlotsStyles.Connexion, markersize = Params.GUI.PlotsWidths.Connexion, color = Color, alpha = self.Alpha)
 
     def UpdateColumn(self, Column):
         if Column[-1] != self.ID:
