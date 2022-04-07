@@ -23,6 +23,8 @@ class Levels:
         High :'+',
         Multiple:'?',
     }
+    Valid = (Low, High)
+    Invalid = (Undef, Multiple)
 
 class Colors:
     class GUI:
@@ -32,18 +34,20 @@ class Colors:
             pressed = C.grey
             validEntry = C.black
             wrongEntry = C.red
+            validLabel = C.black
+            wrongLabel = C.lgrey
         Modes = {
             0:C.white,  # Default
             1:C.white,  # Console
             2:C.yellow, # Building
-            3:C.red, # Building
+            3:C.yellow,    # Removing
         }
     class Component:
         Modes = {
-            0: C.yellow,   # Building
+            0: C.yellow,    # Building
             1: C.white,     # Fixed, undefined.
-            2: C.red,       # Being removed
-            3: C.white,    # Selected
+            2: C.yellow,       # Being removed
+            3: C.white,     # Selected
         }
         Levels = {
             Levels.Undef    : C.white,
@@ -129,7 +133,9 @@ class Params:
             AutoContinueComponent = True
             StopWireOnJoin = True
             DefaultWireBuildMode = 1
+            DefaultBoardPinBuildMode = 0
             AskDeleteConfirmation = False
+            AutoSwitchBoardPins = False # Disabled for now as it cannot be changed afterwards
 
 _L = Params.GUI.PlotsWidths.BoardPinBoxLength
 _H = Params.GUI.PlotsWidths.BoardPinBoxHeight/2

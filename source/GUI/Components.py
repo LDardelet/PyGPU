@@ -245,9 +245,10 @@ class ComponentBase(StorageItem):
 class BoardPinC(ComponentBase):
     CName = "Board Pin"
     LibRef = "BoardPin"
+    BuildMode = Params.GUI.Behaviour.DefaultBoardPinBuildMode
     def __init__(self, Location, Rotation):
         super().__init__(Location, Rotation)
-        self.StoredAttribute('_Type', PinDict.Output)      # Input or output. Output by default, avoids to SetLevel group (board inputs are components inputs, thus are set externally)
+        self.StoredAttribute('_Type', self.__class__.BuildMode)      # Input or output. Output by default, avoids to SetLevel group (board inputs are components inputs, thus are set externally)
         self.StoredAttribute('DefinedLevel', Levels.Undef)
         self.StoredAttribute('_PinLabelRule', 0b11)
         self.StoredAttribute('Side', None)
@@ -279,6 +280,7 @@ class BoardPinC(ComponentBase):
     def Switch(self):
         if not self.State.Building:
             raise Exception(f"{self} switched while not building")
+        self.__class__.BuildMode = 1-self.__class__.BuildMode
         self.Type = 1-self.Type
 
     @property
@@ -301,6 +303,9 @@ class BoardPinC(ComponentBase):
             self.Group.SetLevel(Level, self)
         else:
             raise Exception("Attempting to set level of a board output")
+    @property
+    def Valid(self):
+        return self.Level in Levels.Valid
     @property
     def PinLabelRule(self):
         return self._PinLabelRule

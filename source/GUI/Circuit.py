@@ -14,6 +14,8 @@ class ComponentsHandlerC(StorageItem):
         self.StoredAttribute('Groups', {})
         self.StoredAttribute('Casings', {})
         self.StoredAttribute('Pins', [])
+        self.StoredAttribute('InputPins', tuple()) # Tuples for faster looping
+        self.StoredAttribute('OutputPins', tuple())
         self.StoredAttribute('CasingGroup', CasingGroupC())
         self.Start()
 
@@ -185,28 +187,25 @@ class ComponentsHandlerC(StorageItem):
             else:
                 self.AddConnexion((x,y)) # If not, we create it
 
-    @property
-    def InputPins(self):
-        return [Pin for Pin in self.Pins if Pin.Type == PinDict.Input]
-    @property
-    def OutputPins(self):
-        return [Pin for Pin in self.Pins if Pin.Type == PinDict.Output]
     def AddBoardPin(self, Pin):
         Pin.Index = len(self.Pins)
-        if (Pin.Group.Level == Levels.Undef):
-            Pin.Type = PinDict.Input
+        if Params.GUI.Behaviour.AutoSwitchBoardPins:
+            if (Pin.Group.Level == Levels.Undef):
+                Pin.Type = PinDict.Input
+            else:
+                Pin.Type = PinDict.Output
+        if Pin.Type == PinDict.Input:
             Pin.Side = PinDict.W
             Pin.TypeIndex = len(self.InputPins)
             Pin.Level = (self.Input >> Pin.TypeIndex) & 0b1
         else:
             Pin.TypeIndex = len(self.OutputPins)
-            Pin.Type = PinDict.Output
             Pin.Side = PinDict.E
         self.Pins.append(Pin)
+        self.ReloadPinIndices()
     def RemoveBoardPin(self, Pin):
         self.Pins.remove(Pin)
         self.ReloadPinIndices()
-
     def SetPinIndex(self, Pin, NewIndex, Rule = 'roll'):
         if Pin.Index == NewIndex:
             return
@@ -217,7 +216,10 @@ class ComponentsHandlerC(StorageItem):
         elif Rule == 'switch':
             self.Pins[NewIndex], self.Pins[PreviousIndex] = self.Pins[PreviousIndex], self.Pins[NewIndex]
         self.ReloadPinIndices()
+
     def ReloadPinIndices(self):
+        self.InputPins =  tuple([Pin for Pin in self.Pins if Pin.Type == PinDict.Input])
+        self.OutputPins = tuple([Pin for Pin in self.Pins if Pin.Type == PinDict.Output])
         for nPin, Pin in enumerate(self.Pins):
             Pin.Index = nPin
         for nPin, Pin in enumerate(self.InputPins):
@@ -228,24 +230,33 @@ class ComponentsHandlerC(StorageItem):
     @property
     def Input(self):
         Input = 0
-        for Pin in reversed(self.Pins): # Use of little-endian norm
-            if Pin.Type == PinDict.Input:
-                Input = (Input << 1) | Pin.Level
+        for Pin in reversed(self.InputPins): # Use of little-endian norm
+            Input = (Input << 1) | Pin.Level
         return Input
     @Input.setter
     @Modifies
     def Input(self, Input):
-        for Pin in self.Pins:
-            if Pin.Type == PinDict.Input:
-                Pin.Level = Input & 0b1
-                Input = Input >> 1
+        for Pin in self.InputPins:
+            Pin.Level = Input & 0b1
+            Input = Input >> 1
     @property
     def Output(self):
         Output = 0
-        for Pin in reversed(self.Pins): # Use of little-endian norm
-            if Pin.Type == PinDict.Output:
-                Output = (Output << 1) | Pin.Level
+        for Pin in reversed(self.OutputPins): # Use of little-endian norm
+            Output = (Output << 1) | Pin.Level
         return Output
+    @property
+    def InputValid(self):
+        Valid = 0
+        for Pin in reversed(self.InputPins):
+            Valid = (Valid << 1) | (Pin.Valid)
+        return Valid
+    @property
+    def OutputValid(self):
+        Valid = 0
+        for Pin in reversed(self.OutputPins):
+            Valid = (Valid << 1) | (Pin.Valid)
+        return Valid
 
     def CheckWireMerges(self, W1):
         for x, y in W1.AdvertisedConnexions:
@@ -561,19 +572,21 @@ class GroupC(StorageItem):
     def Clear(self):
         for Component in self.Components:
             Component.Clear()
+    def Switch(self):
+        pass
 
     @property
     def Color(self):
         return Colors.Component.Levels[self.Level]
     def __repr__(self):
-        return f"Group {self.ID} ({', '.join([Levels.Names[self.Level]] + [str(ID) for ID in sorted([Component.ID for Component in self.SetBy.keys()])])})"
-        if len(self.SetBy) == 0:
-            LevelStr = f"({Levels.Names[self.Level]})"
-        elif len(self.SetBy) == 1:
-            LevelStr = f"({Levels.Names[self.Level]}, {str(list(self.SetBy.keys())[0].ID)})"
-        else:
-            LevelStr = '(multiple sets)'
-        return f"Group {self.ID} {LevelStr}"
+        #return f"Group {self.ID} ({', '.join([Levels.Names[self.Level]] + [str(ID) for ID in sorted([Component.ID for Component in self.SetBy.keys()])])})"
+        #if len(self.SetBy) == 0:
+        #    LevelStr = f"({Levels.Names[self.Level]})"
+        #elif len(self.SetBy) == 1:
+        #    LevelStr = f"({Levels.Names[self.Level]}, {str(list(self.SetBy.keys())[0].ID)})"
+        #else:
+        #    LevelStr = '(multiple sets)'
+        return f"Group {self.ID}"
     def __len__(self): # We do not consider connexions as part of the length of a group
         return len(self.Components.difference(self.Connexions))
     def __contains__(self, Component):

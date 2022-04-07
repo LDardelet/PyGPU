@@ -31,16 +31,12 @@ class ModeC:
         if Advertise:
             Log(f"Mode {self.Name}" + bool(Message)*f' ({Message})')
         if self.Current == self:
-            self.__class__.ReloadProps(self.GUI) # This writing allows to make XProps functions like GUI class methods
+            self.__class__.ReloadProps(self.GUI) # This writing allows to make XProps functions behave like GUI class methods
             return
         self.Current.__class__.LeaveProps(self.GUI)
         Prev, ModeC.Current = self.Current.__class__, self
         self.__class__.SetProps(self.GUI, Prev)
-        self.GUI.Plots['Cursor'].set_color(self.Color)
-        if Params.GUI.View.CursorLinesWidth:
-            self.GUI.Plots['HCursor'].set_color(self.Color)
-            self.GUI.Plots['VCursor'].set_color(self.Color)
-        self.GUI.DisplayFigure.canvas.draw()
+        self.GUI.UpdateCursorStyle()
     def __bool__(self):
         return self.Current == self
     def SetProps(self, From):
@@ -66,7 +62,6 @@ class DefaultModeC(ModeC):
         self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.DISABLED)
     def ReloadProps(self):
         self.ClearTmpComponents()
-        self.DisplayFigure.canvas.draw()
 class TextModeC(ModeC):
     ID = 1
     def SetProps(self, From):
@@ -83,7 +78,7 @@ class BuildModeC(ModeC):
         self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.HiddenAlpha)
     def LeaveProps(self):
         self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.DefaultAlpha)
-        self.ColorLibComponent(None)
+        self.SetLibraryButtonColor(None)
     def ReloadProps(self):
         self.ClearTmpComponents()
 class DeleteModeC(ModeC):
@@ -197,26 +192,59 @@ class SFrame:
         return f"SFrame {self.Name}"
 
 class BoardIOWidgetBase:
-    ReturnCallback = None
-    LevelModificationCallback = None
-    Mask = None
-    BitStart = None
+#    ReturnCallback = None
+#    LevelModificationCallback = None
+    GUI = None
+    Mask = 0b0
+    Level = 0
+    Valid = True
+    _Bits = tuple()
     def Push(self, PreviousBoardLevel):
-        return (PreviousBoardLevel & ~self.Mask) | (self.Level << self.BitStart)
-    def Pull(self, NewBoardLevel):
-        self.Level = (NewBoardLevel & self.Mask) >> self.BitStart
+        return (PreviousBoardLevel & ~self.Mask) | self.MaskedLevel
+    def Pull(self, NewBoardLevel, Validity):
+        Level = 0
+        self.Valid = True
+        for Bit in reversed(self._Bits):
+            Level <<= 1
+            Level |= (NewBoardLevel >> Bit) & 0b1 
+            if not (Validity >> Bit) & 0b1:
+                self.Valid = False
+        self.Level = Level
+        self.UpdateRepresentation()
+    @property
+    def Bits(self):
+        return self._Bits
+    @Bits.setter
+    def Bits(self, Bits):
+        self._Bits = Bits
+        self.Mask = 0b0
+        for Bit in Bits:
+            self.Mask |= 1<<Bit
+        self.OnBitsChange()
+    @property
+    def MaskedLevel(self):
+        ML = 0
+        L = self.Level
+        for Bit in self._Bits: # Reversed ?
+            ML |= (L & 0b1) << Bit
+            L >>= 1
+        return ML
+    def OnBitsChange(self):
+        pass
+    def UpdateRepresentation(self):
+        pass
+    @property
+    def NBits(self):
+        return len(self._Bits)
+    @property
+    def MaxLevel(self):
+        return (2**self.NBits) - 1
 
 class SEntry(BoardIOWidgetBase):
-    def __init__(self, frame, Name, NBits, BitStart, TotalWidth):
-        self._Level = 0
-        self._NBits = NBits
-        self._BitStart = BitStart
-        self.UpdateMask()
-        self.MaxLevel = 2**self.NBits
-
+    def __init__(self, frame, Name, Bits, TotalWidth):
         self.frame = frame
         self.Name = Name
-        self.NameLabel = Tk.Label(frame, text = f"{self.Name} ({self._NBits} bits)", width = TotalWidth)
+        self.NameLabel = Tk.Label(frame, text = f"", width = TotalWidth)
         self.NameLabel.grid(row = 0, column = 0, columnspan = 3, sticky=Tk.EW)
         self.IntVar = Tk.StringVar(frame, self.int)
         self.BinVar = Tk.StringVar(frame, self.bin)
@@ -229,98 +257,66 @@ class SEntry(BoardIOWidgetBase):
             Entry.bind("<Return>", Callback)
         self.frame.bind('<FocusOut>', self.Reset)
 
+        self.Bits = Bits
+
     def Reset(self, *args, **kwargs): # avoid unconfirmed changes to be propagated
         if self.frame.focus_get() != None:
-            self.UpdateRepresentations()
+            self.UpdateRepresentation()
 
-    @property
-    def NBits(self):
-        return self._NBits
-    @NBits.setter
-    def NBits(self, NBits):
-        self._NBits = NBits
-        self.UpdateMask()
-        self.MaxLevel = 2**self._NBits
-        self.NameLabel.configure(text = f"{self.Name} ({self._NBits} bits)")
-        self.CheckValidity()
-    @property
-    def BitStart(self):
-        return self._BitStart
-    @BitStart.setter
-    def BitStart(self, BitStart):
-        self._BitStart = BitStart
-        self.UpdateMask()
-    def UpdateMask(self):
-        self.Mask = ((1 << self.NBits) - 1) << self.BitStart
+    def OnBitsChange(self):
+        self.NameLabel.configure(text = f"{self.Name} ({self.NBits} bits)")
+        self.UpdateRepresentation()
 
-    @property
-    def Level(self):
-        return self._Level
-    @Level.setter
-    def Level(self, Level):
-        self._Level = Level
-        self.UpdateRepresentations()
-        self.CheckValidity()
-    def UpdateRepresentations(self):
-        for (Var, Representation) in zip((self.IntVar, self.BinVar, self.HexVar), (self.int, self.bin, self.hex)):
-            if Var.get() != Representation:
-                Var.set(Representation)
+    def Set(self, Level):
+        if Level > self.MaxLevel:
+            self.Level = self.MaxLevel
+        else:
+            self.Level = Level
+        self.GUI.BoardIOWidgetReturnCallback(self)
+        self.GUI.BoardIOWidgetLevelModificationCallback(self)
 
     @property
     def int(self):
-        return str(self._Level)
+        return str(self.Level)
     def IntSet(self, *args, **kwargs):
         try:
-            self.Level = int(self.IntVar.get())
+            self.Set(int(self.IntVar.get()))
         except ValueError:
-            self.Level = 0
-        self.ReturnCallback()
-        if self.Valid:
-            self.LevelModificationCallback()
+            self.Set(0)
     @property
     def bin(self):
-        return format(self._Level, f'#0{2+self.NBits}b')
+        return format(self.Level, f'#0{2+self.NBits}b')
     def BinSet(self, *args, **kwargs):
         try:
-            self.Level = int(self.BinVar.get(), 2)
+            self.Set(int(self.BinVar.get(), 2))
         except ValueError:
-            self.Level = 0
-        self.ReturnCallback()
-        if self.Valid:
-            self.LevelModificationCallback()
+            self.Set(0)
     @property
     def hex(self):
-        return format(self._Level, f'#0{2+(self.NBits+3)//4}x')
+        return format(self.Level, f'#0{2+(self.NBits+3)//4}x')
     def HexSet(self, *args, **kwargs):
         try:
-            self.Level = int(self.HexVar.get(), 16)
+            self.Set(int(self.HexVar.get(), 16))
         except ValueError:
-            self.Level = 0
-        self.ReturnCallback()
-        if self.Valid:
-            self.LevelModificationCallback()
+            self.Set(0)
 
-    @property
-    def Valid(self):
-        return self.Level < self.MaxLevel
-    def CheckValidity(self):
+    def UpdateRepresentation(self):
         if self.Valid:
             Color = Colors.GUI.Widget.validEntry
         else:
             Color = Colors.GUI.Widget.wrongEntry
-        for Entry in self.Entries:
+        for (Var, Representation, Entry) in zip((self.IntVar, self.BinVar, self.HexVar), (self.int, self.bin, self.hex), self.Entries):
+            Var.set(Representation)
             Entry.configure(fg = Color)
+
     def __repr__(self):
         return self.Name
 
 class SLabel(BoardIOWidgetBase):
-    def __init__(self, frame, Name, NBits, BitStart, TotalWidth):
-        self._Level = 0
-        self._NBits = NBits
-        self._BitStart = BitStart
+    def __init__(self, frame, Name, Bits, TotalWidth):
         self.frame = frame
         self.Name = Name
-        self.NameLabel = Tk.Label(frame, text = f"{self.Name} ({self._NBits} bits)", width = TotalWidth)
+        self.NameLabel = Tk.Label(frame, text = f"", width = TotalWidth)
         self.NameLabel.grid(row = 0, column = 0, columnspan = 3)
         self.Labels =  (Tk.Label(frame, text=self.int, width = TotalWidth//3, anchor = Tk.W),
                         Tk.Label(frame, text=self.bin, width = TotalWidth//3, anchor = Tk.W),
@@ -328,48 +324,37 @@ class SLabel(BoardIOWidgetBase):
         for nLabel, Label in enumerate(self.Labels):
             Label.grid(row = 1, column = nLabel)
 
-    @property
-    def NBits(self):
-        return self._NBits
-    @NBits.setter
-    def NBits(self, NBits):
-        self._NBits = NBits
-        self.UpdateMask()
-        self.NameLabel.configure(text = f"{self.Name} ({self._NBits} bits)")
-    @property
-    def BitStart(self):
-        return self._BitStart
-    @BitStart.setter
-    def BitStart(self, BitStart):
-        self._BitStart = BitStart
-        self.UpdateMask()
-    def UpdateMask(self):
-        self.Mask = ((1 << self.NBits) - 1) << self.BitStart
+        self.Bits = Bits
+
+    def OnBitsChange(self):
+        self.NameLabel.configure(text = f"{self.Name} ({self.NBits} bits)")
 
     @property
-    def Level(self):
-        return self._Level
-    @Level.setter
-    def Level(self, Level):
-        self._Level = Level
-        for (Label, Representation) in zip(self.Labels, (self.int, self.bin, self.hex)):
-            Label.configure(text = Representation)
-    @property
     def int(self):
-        return str(self._Level)
+        return str(self.Level)
     @property
     def bin(self):
-        return format(self._Level, f'#0{2+self.NBits}b')
+        return format(self.Level, f'#0{2+self.NBits}b')
     @property
     def hex(self):
-        return format(self._Level, f'#0{2+(self.NBits+3)//4}x')
+        return format(self.Level, f'#0{2+(self.NBits+3)//4}x')
+    def UpdateRepresentation(self):
+        if self.Valid:
+            Color = Colors.GUI.Widget.validLabel
+        else:
+            Color = Colors.GUI.Widget.wrongLabel
+        for (Label, Representation) in zip(self.Labels, (self.int, self.bin, self.hex)):
+            Label.configure(text = Representation)
+            Label.configure(fg = Color)
+
+    def __repr__(self):
+        return self.Name
 
 class SPinEntry(BoardIOWidgetBase):
     def __init__(self, frame, Pin):
         self.frame = frame
         self.Pin = Pin
 
-        self._Level = self.Pin.Level
         self.Type = self.Pin.Type
 
         self.IDLabel = Tk.Label(frame, text = self.Pin.Label)
@@ -384,37 +369,37 @@ class SPinEntry(BoardIOWidgetBase):
         self.SetButton.grid(column = 1, row = 0, rowspan = 2)
         if self.Type == PinDict.Output:
             self.SetButton.configure(state = Tk.DISABLED)
+            self.InvalidColor = Colors.GUI.Widget.wrongLabel
+        else:
+            self.InvalidColor = Colors.GUI.Widget.wrongEntry
 
-    @property
-    def BitStart(self):
-        return self.Pin.TypeIndex
-    @property
-    def Mask(self):
-        return 1 << self.BitStart
+        self.Bits = (Pin.TypeIndex,)
 
-    @property
-    def Level(self):
-        return self._Level
-    @Level.setter
-    def Level(self, Level):
-        self._Level = Level
-        self.SetButton.configure(bg = Colors.Component.Levels[self.Level])
-        self.SetButton.configure(activebackground = Colors.Component.Levels[self.Level])
-
-    def UpdateIndices(self):
+    def OnBitsChange(self):
         self.frame.grid(row = self.Pin.TypeIndex+1, column = 0)
         self.IDLabel['text'] = self.Pin.Label
 
     def Switch(self):
         self.Level = 1 - self.Level
-        self.LevelModificationCallback()
+        self.GUI.BoardIOWidgetLevelModificationCallback(self)
 
     def SetName(self, *args, **kwargs):
         self.Pin.Name = self.NameVar.get()[:Params.GUI.RightPanel.PinNameEntryWidth]
         self.IDLabel['text'] = self.Pin.Label
-        self.ReturnCallback()
+        self.GUI.BoardIOWidgetReturnCallback(self)
     def Reset(self, *args, **kwargs):
         if self.frame.focus_get() != None and self.NameVar.get() != self.Pin.Name:
             self.NameVar.set(self.Pin.Name)
+
+    def UpdateRepresentation(self):
+        if not self.Valid:
+            Color = self.InvalidColor
+            self.SetButton.configure(state = Tk.DISABLED)
+        else:
+            self.SetButton.configure(state = Tk.NORMAL)
+            Color = Colors.Component.Levels[self.Level]
+        self.SetButton.configure(bg = Color)
+        self.SetButton.configure(activebackground = Color)
+
     def __repr__(self):
         return f"{self.Pin.Label} PinEntry"

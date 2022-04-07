@@ -19,10 +19,100 @@ matplotlib.use("TkAgg")
 
 class GUI:
     Modes = ModesDict() # Here as we need mode decorator
+    UpdateFunctions = {}
+    UpdateLocked = False
+
+    def Trigger(func):
+        def Wrap(self, *args, **kwargs):
+            UpdateWhenFinished = False
+            if not self.UpdateLocked:
+                self.UpdateLocked = True
+                UpdateWhenFinished = True
+            else:
+                print(f"Trigger ignored : {func.__name__}")
+            res = func(self, *args, **kwargs)
+            if UpdateWhenFinished:
+                self.SolveUpdateRequests(func)
+            return res
+        return Wrap
+    def Update(*UpdateFunctions):
+        def Wrapper(func):
+            def Wrap(self, *args, **kwargs):
+                for UpdateFunction in UpdateFunctions:
+                    if UpdateFunction in self.UpdateFunctions:
+                        self.UpdateFunctions[UpdateFunction].add(func.__name__)
+                    else:
+                        self.UpdateFunctions[UpdateFunction] = {func.__name__}
+                return func(self, *args, **kwargs)
+            return Wrap
+        return Wrapper
+
+    def LocalView(self):                                # Update of the plot (colors, style, ... with no effect on the cursor, the highlight or the level values
+        self.DisplayCanvas.draw()
+    def BoardState(self): # Formerly Draw()
+        for BoardInputWidget in self.BoardInputWidgets:
+            BoardInputWidget.Pull(self.CH.Input, self.CH.InputValid)
+        if self.CH.LiveUpdate:
+            for BoardOutputWidget in self.BoardOutputWidgets:
+                BoardOutputWidget.Pull(self.CH.Output, self.CH.OutputValid)
+        self.DisplayCanvas.draw()
+    def CursorInfo(self):
+        GroupsInfo = self.CH.GroupsInfo(self.Cursor)
+        self.MainFrame.Board.DisplayToolbar.Labels.CursorLabel['text'] = f"{self.Cursor.tolist()}" + bool(GroupsInfo)*": " + self.CH.GroupsInfo(self.Cursor)
+        if self.Highlighted is None:
+            Info = ""
+        else:
+            Info = str(self.Highlighted)
+        self.MainFrame.Board.DisplayToolbar.Labels.HighlightLabel['text'] = f"Highlight: {Info}"
+    def GUILayout(self): # Formerly CheckBoardPins()
+        for Pin, PinEntry in list(self.SetupPins.items()):
+            if Pin not in self.CH.Pins:
+                if Pin.Type == PinDict.Input or PinEntry.Type != Pin.Type:
+                    self.MainFrame.Right_Panel.Input_Pins.Destroy(f"PinFrame{Pin.ID}")
+                else:
+                    self.MainFrame.Right_Panel.Output_Pins.Destroy(f"PinFrame{Pin.ID}")
+                del self.SetupPins[Pin]
+            else: # We ensure the pin is in the right location
+                PinEntry.Bits = (Pin.TypeIndex, )
+        for Pin in self.CH.Pins:
+            if Pin not in self.SetupPins:
+                if Pin.Type == PinDict.Input:
+                    PinFrame = self.MainFrame.Right_Panel.Input_Pins.AddFrame(f"PinFrame{Pin.ID}", row = Pin.TypeIndex+1, column = 0, Border = True, NoName = True)
+                    PinSet = self.BoardInputWidgets
+                else:
+                    PinFrame = self.MainFrame.Right_Panel.Output_Pins.AddFrame(f"PinFrame{Pin.ID}", row = Pin.TypeIndex+1, column = 0, Border = True, NoName = True)
+                    PinSet = self.BoardOutputWidgets
+                PinEntry = SPinEntry(PinFrame.frame, Pin)
+                self.SetupPins[Pin] = PinEntry
+                PinSet.add(PinEntry)
+        self.BoardInputEntry.Bits = tuple(range(len(self.CH.InputPins)))
+        self.BoardOutputLabel.Bits = tuple(range(len(self.CH.OutputPins)))
+
+    def SolveUpdateRequests(self, func):
+        if not self.UpdateFunctions:
+            print(f"{func.__name__} induced no update")
+        else:
+            print(f"Updates triggered by {func.__name__}:")
+            while self.UpdateFunctions:
+                UpdateFunction, Callers = self.UpdateFunctions.popitem()
+                print(f" -> {UpdateFunction.__name__} called by {', '.join(Callers)}")
+                UpdateFunction(self)
+        self.UpdateLocked = False
+
     def __init__(self, Args):
         self.MainWindow = Tk.Tk()
 
-        self.LoadGUIModes()
+#        def ReturnCallback(Entry):
+#            self.Modes.Default(Message = f'Entry return by {Entry}')
+#
+#        def LevelModificationCallback(Entry):
+#            self.SetBoardInput(Entry.Push(self.CH.Input))
+#
+#       BoardIOWidgetBase.ReturnCallback = ReturnCallback
+#       BoardIOWidgetBase.LevelModificationCallback = LevelModificationCallback
+        
+        BoardIOWidgetBase.GUI = self
+        ModeC.GUI = self
         self.Library = Circuit.CLibrary()
         self.FH = Storage.FileHandlerC()
 
@@ -34,14 +124,40 @@ class GUI:
         else:
             self.LoadBoardData()
 
+        self.SolveUpdateRequests(self.__init__)
+
         self.MainWindow.mainloop()
 
-    def LoadGUIModes(self):
-        ModeC.GUI = self
+    @Trigger
+    def OnClickMove(self, Click):
+        if self.Modes.Text:
+            self.Modes.Default(Message='Click')
+        self.Cursor = np.rint(Click).astype(int)
+        self.OnMove()
+
+    @Trigger
+    def BoardIOWidgetReturnCallback(self, Entry):
+        self.Modes.Default(Message = f'Entry return by {Entry}')
+
+    @Trigger
+    def BoardIOWidgetLevelModificationCallback(self, Entry):
+        self.SetBoardInput(Entry.Push(self.CH.Input))
+
+    @Trigger  # TODO : merge all callback functions to OnUserAction
+    def OnStaticGUIButton(self, Callback, *args, **kwargs):
+        return Callback(self, *args, **kwargs)
+
+    @Trigger
+    def OnKeyRegistration(self, Callback, Key, Mod):
+        Callback(Key, Mod)
+
+    @Trigger
+    def OnComponentButtonClick(self, ComponentClass):
+        self.StartComponent(ComponentClass)
+
+    # Update functions. No trigger should be within here, apart from simulation run
 
     def ClearBoard(self):
-        if self.CH._Modified:
-            return False
         self.CH.LiveUpdate = False # Possibly useless
         self.DisplayAx.cla()
         self.PlotView()
@@ -58,8 +174,9 @@ class GUI:
         self.FH.Save(handler = self.CH)
 
     def Open(self, Ask):
-        if not self.ClearBoard():
+        if self.CH._Modified:
             return
+        self.ClearBoard()
         if Ask:
             Filename = Tk.filedialog.askopenfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')
             if not Filename is None:
@@ -67,6 +184,11 @@ class GUI:
         else:
             self.LoadBoardData()
 
+    @Update(BoardState)
+    def SetBoardInput(self, Input):
+        self.CH.Input = Input
+
+    @Update(GUILayout, BoardState)
     def LoadBoardData(self, Filename = None):
         if not os.path.exists(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder):
             os.mkdir(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder)
@@ -84,9 +206,9 @@ class GUI:
         self.Highlighted = None
         self.TmpComponents = set()
         self.SetupPins = {}
+        self.UpdateLocked = False
 
         self.SetView()
-        self.CheckBoardPins()
 
     def SetTitle(self):
         if self.FH.Filename is None:
@@ -95,12 +217,13 @@ class GUI:
             BoardName = self.FH.Filename.split('/')[-1]
         self.MainWindow.title(Params.GUI.Name + f" ({BoardName})")
 
+    @Update(LocalView)
+    @Modes.Build
     def StartComponent(self, CClass):
-        self.ColorLibComponent(self.CompToButtonMap[CClass])
-        self.Modes.Build(Message='start component')
+        self.SetLibraryButtonColor(self.CompToButtonMap[CClass])
         self.TmpComponents.add(CClass(self.Cursor, self.Rotation))
-        self.Draw()
 
+    @Update(LocalView)
     def ClearTmpComponents(self):
         while self.TmpComponents:
             self.TmpComponents.pop().Clear()
@@ -110,15 +233,27 @@ class GUI:
         self.Cursor += Move
         self.OnMove()
 
-    def OnClickMove(self, Click):
-        if self.Modes.Text:
-            self.Modes.Default(Message='Click')
-        self.Cursor = np.rint(Click).astype(int)
-        self.OnMove()
+    @Update(LocalView)
+    def OnMove(self):
+        self.UpdateCursorPlot()
+        Displacement = np.maximum(0, self.Cursor + Params.GUI.View.DefaultMargin - (self.LeftBotLoc + self.Size))
+        if Displacement.any():
+            self.LeftBotLoc += Displacement
+            self.SetBoardLimits()
+        else:
+            Displacement = np.maximum(0, self.LeftBotLoc - (self.Cursor - Params.GUI.View.DefaultMargin))
+            if Displacement.any():
+                self.LeftBotLoc -= Displacement
+                self.SetBoardLimits()
+        self.MoveHighlight()
+        if self.Modes.Build:
+            for Component in self.TmpComponents:
+                Component.Drag(self.Cursor)
+        if self.Modes.Default:
+            self.CheckConnexionToggle()
 
     def SetView(self, View = None):
         if View is None:
-            Log("Setting default view")
             self.Size = Params.GUI.View.Zooms[0]
             if (self.CH.ComponentsLimits == 0).all():
                 self.Size = Params.GUI.View.Zooms[0]
@@ -132,18 +267,6 @@ class GUI:
         
         self.UpdateCursorPlot()
         self.MoveHighlight()
-        self.Draw()
-
-    def OnMove(self):
-        self.UpdateCursorPlot()
-        self.CheckBoardLimits()
-        self.MoveHighlight()
-        if self.Modes.Build:
-            for Component in self.TmpComponents:
-                Component.Drag(self.Cursor)
-        if self.Modes.Default:
-            self.CheckConnexionToggle()
-        self.Draw()
 
     def NextZoom(self):
         self.DisplayToolbar.children['!checkbutton2'].deselect()
@@ -153,28 +276,28 @@ class GUI:
             self.Size = Params.GUI.View.Zooms[(Params.GUI.View.Zooms.index(self.Size)+1)%len(Params.GUI.View.Zooms)]
         self.LeftBotLoc = self.Cursor - (self.Size // 2)
         self.SetBoardLimits()
-        self.Draw()
-        
+
+    @Update(LocalView) 
     def UpdateCursorPlot(self):
         self.Plots['Cursor'].set_data(*self.Cursor)
         if Params.GUI.View.CursorLinesWidth:
             self.Plots['HCursor'].set_data([-Params.Board.Max, Params.Board.Max], [self.Cursor[1], self.Cursor[1]])
             self.Plots['VCursor'].set_data([self.Cursor[0], self.Cursor[0]], [-Params.Board.Max, Params.Board.Max])
 
-    def CheckBoardLimits(self):
-        Displacement = np.maximum(0, self.Cursor + Params.GUI.View.DefaultMargin - (self.LeftBotLoc + self.Size))
-        if Displacement.any():
-            self.LeftBotLoc += Displacement
-            self.SetBoardLimits()
-        else:
-            Displacement = np.maximum(0, self.LeftBotLoc - (self.Cursor - Params.GUI.View.DefaultMargin))
-            if Displacement.any():
-                self.LeftBotLoc -= Displacement
-                self.SetBoardLimits()
+    @Update(LocalView)
+    def UpdateCursorStyle(self):
+        Color = self.Modes.Current.Color
+        self.Plots['Cursor'].set_color(Color)
+        if Params.GUI.View.CursorLinesWidth:
+            self.Plots['HCursor'].set_color(Color)
+            self.Plots['VCursor'].set_color(Color)
+
+    @Update(LocalView)
     def SetBoardLimits(self):
         self.DisplayAx.set_xlim(self.LeftBotLoc[0],self.LeftBotLoc[0]+self.Size)
         self.DisplayAx.set_ylim(self.LeftBotLoc[1],self.LeftBotLoc[1]+self.Size)
 
+    @Update(LocalView)
     def SetWireBuildMode(self, mode):
         self.WireButtons[mode].configure(background = Colors.GUI.Widget.pressed)
         self.WireButtons[1-mode].configure(background = Colors.GUI.Widget.default)
@@ -184,33 +307,8 @@ class GUI:
                 for Component in self.TmpComponents:
                     if self.Library.IsWire(Component):
                         Component.Switch()
-                self.Draw()
 
-    def CheckBoardPins(self):
-        for Pin, PinEntry in list(self.SetupPins.items()):
-            if Pin not in self.CH.Pins:
-                if Pin.Type == PinDict.Input or PinEntry.Type != Pin.Type:
-                    self.MainFrame.Right_Panel.Input_Pins.Destroy(f"PinFrame{Pin.ID}")
-                else:
-                    self.MainFrame.Right_Panel.Output_Pins.Destroy(f"PinFrame{Pin.ID}")
-                del self.SetupPins[Pin]
-            else: # We ensure the pin is in the right location
-                PinEntry.UpdateIndices()
-        for Pin in self.CH.Pins:
-            if Pin not in self.SetupPins:
-                self.AddBoardPin(Pin)
-        self.BoardInputEntry.NBits = len(self.CH.InputPins)
-        self.BoardOutputLabel.NBits = len(self.CH.OutputPins)
-
-    def AddBoardPin(self, Pin):
-        if Pin.Type == PinDict.Input:
-            PinFrame = self.MainFrame.Right_Panel.Input_Pins.AddFrame(f"PinFrame{Pin.ID}", row = Pin.TypeIndex+1, column = 0, Border = True, NoName = True)
-        else:
-            PinFrame = self.MainFrame.Right_Panel.Output_Pins.AddFrame(f"PinFrame{Pin.ID}", row = Pin.TypeIndex+1, column = 0, Border = True, NoName = True)
-        PinEntry = SPinEntry(PinFrame.frame, Pin)
-        self.SetupPins[Pin] = PinEntry
-        self.BoardIOWidgets.add(PinEntry)
-
+    @Update(GUILayout)
     def Set(self):
         Joins = self.CH.HasItem(self.Cursor)
         if self.Modes.Build:
@@ -219,29 +317,31 @@ class GUI:
             Component = self.TmpComponents.pop()
             if self.CH.Register(Component):
                 self.MoveHighlight()
-                if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(Component) or (not Params.GUI.Behaviour.StopWireOnJoin) or not Joins):
-                    self.StartComponent(Component.__class__)
-                else:
-                    self.Modes.Default(Message='end of build')
-                    self.Draw()
-                self.CheckBoardPins()
+                self.ConfirmComponentRegister(Component)
             else:
                 self.TmpComponents.add(Component)
         elif self.Modes.Default:
             if self.CH.HasItem(self.Cursor) and self.CH.FreeSlot(self.Cursor):
                 self.StartComponent(self.Library.Wire)
 
+    @Update(GUILayout)
+    def ConfirmComponentRegister(self, Component):
+        if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(Component) or (not Params.GUI.Behaviour.StopWireOnJoin) or not Joins):
+            self.StartComponent(Component.__class__)
+        else:
+            self.Modes.Default(Message='end of build')
+
+    @Update(LocalView, CursorInfo)
     def Switch(self):
         if self.Modes.Build:
             for Component in self.TmpComponents:
                 Component.Switch()
                 if self.Library.IsWire(Component):
                     self.SetWireBuildMode(self.Library.Wire.BuildMode)
-            self.DisplayFigure.canvas.draw()
         elif self.Modes.Default:
             self.NextHighlight()
-            self.DisplayFigure.canvas.draw()
 
+    @Update(LocalView, CursorInfo)
     def Select(self):
         if self.Highlighted is None:
             return
@@ -257,31 +357,28 @@ class GUI:
                 self.TmpComponents.update(self.Highlighted.StartRemoving())
             else:
                 self.TmpComponents.difference_update(self.Highlighted.Fix())
-        self.DisplayFigure.canvas.draw()
 
-
+    @Update(LocalView)
     def DeleteSelect(self): # Called when starting delete mode
         if not self.Highlighted is None:
             self.Select()
         for Component in self.TmpComponents:
             Component.StartRemoving()
-        self.DisplayFigure.canvas.draw()
+
+    @Update(GUILayout, BoardState, CursorInfo)
     def DeleteConfirm(self): # Called when removing again, actual removing action trigger
         if not self.Highlighted is None and not self.Highlighted.Removing:
             return self.Select()
         if not Params.GUI.Behaviour.AskDeleteConfirmation or self.AskConfirm(f"Do you confirm the deletion of {len(self.TmpComponents)} components ?"):
             self.CH.Remove(self.TmpComponents)
-            self.DisplayFigure.canvas.draw()
             self.TmpComponents = set()
             self.Modes.Default(Message = 'end of delete')
-            self.CheckBoardPins()
 
+    @Update(LocalView)
     def Rotate(self, var):
         self.Rotation = (self.Rotation + 1) & 0b11
         for Component in self.TmpComponents:
             Component.Rotate()
-        if self.TmpComponents:
-            self.Draw()
 
     def MoveHighlight(self, Reset = False):
         self.CanHighlight = [Group for Group in self.CH.CursorGroups(self.Cursor) if len(Group.Wires) > 1] \
@@ -293,31 +390,19 @@ class GUI:
             self.SwitchHighlight(self.CanHighlight[0])
     def NextHighlight(self):
         self.SwitchHighlight(self.CanHighlight[(self.CanHighlight.index(self.Highlighted)+1)%len(self.CanHighlight)])
-        self.UpdateHighlightLabel()
+
+    @Update(LocalView, CursorInfo)
     def SwitchHighlight(self, Item):
         if not self.Highlighted is None:
             self.Highlighted.Highlight(False)
         self.Highlighted = Item
         if not Item is None:
             self.Highlighted.Highlight(True)
-    def UpdateHighlightLabel(self):
-        if self.Highlighted is None:
-            Info = ""
-        else:
-            Info = str(self.Highlighted)
-        self.MainFrame.Board.DisplayToolbar.Labels.HighlightLabel['text'] = Info
-
-    def Draw(self):
-        GroupsInfo = self.CH.GroupsInfo(self.Cursor)
-        self.MainFrame.Board.DisplayToolbar.Labels.CursorLabel['text'] = f"{self.Cursor.tolist()}" + bool(GroupsInfo)*": " + self.CH.GroupsInfo(self.Cursor)
-        self.UpdateHighlightLabel()
-        self.DisplayFigure.canvas.draw()
 
     @Modes.Default
     def ToggleConnexion(self):
         self.CH.ToggleConnexion(self.Cursor)
         self.MoveHighlight(Reset = True)
-        self.Draw()
     def CheckConnexionToggle(self):
         if self.CH.CanToggleConnexion(self.Cursor):
             self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.NORMAL)
@@ -328,26 +413,26 @@ class GUI:
         else:
             self.MainFrame.Board.Controls.ToggleConnexionButton.configure(image = self._Icons['DotImage'])
 
-    def SetBoardInput(self, Level):
-        self.CH.Input = Level # Only access point to CH for input modification
-        for BoardIOWidget in self.BoardIOWidgets:
-            BoardIOWidget.Pull(Level)
-        self.DisplayFigure.canvas.draw()
+    @Update(LocalView)
+    def PlotView(self):
+        self.Plots = {}
+        self.Plots['Cursor'] = self.DisplayAx.plot(0,0, marker = 'o', color = self.Modes.Current.Color)[0]
+        if Params.GUI.View.CursorLinesWidth:
+            self.Plots['HCursor'] = self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max], [0,0], linewidth = Params.GUI.View.CursorLinesWidth, color = self.Modes.Current.Color, alpha = 0.3)[0]
+            self.Plots['VCursor'] = self.DisplayAx.plot([0,0], [-Params.Board.Max, Params.Board.Max], linewidth = Params.GUI.View.CursorLinesWidth, color = self.Modes.Current.Color, alpha = 0.3)[0]
+        RLE = Params.GUI.View.RefLineEvery
+        if RLE:
+            NLines = Params.Board.Size // RLE
+            self.Plots['HLines']=[self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max], 
+                                 [nLine*RLE, nLine*RLE], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
+            self.Plots['VLines']=[self.DisplayAx.plot([nLine*RLE, nLine*RLE], 
+                                 [-Params.Board.Max, Params.Board.Max], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
 
 # Loading methods
 
     def LoadGUI(self):
         self._Icons = {}
     
-        def ReturnCallback(Entry):
-            self.Modes.Default(Message = f'Entry return by {Entry}')
-            self.Draw()
-        def LevelModificationCallback(Entry):
-            self.SetBoardInput(Entry.Push(self.CH.Input))
-        BoardIOWidgetBase.ReturnCallback = ReturnCallback
-        BoardIOWidgetBase.LevelModificationCallback = LevelModificationCallback
-        
-
         self.LoadKeys()
 
         self.MainFrame = SFrame(self.MainWindow)
@@ -401,11 +486,12 @@ class GUI:
         self.AddControlKey('n', lambda key, mod:self.Open(Ask=False), Mod = CTRL)
 
         #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__)) # Override to check key value
+
     def TextFilter(self, Callback, Symbol, Modifier):
         #if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5', 'f6'): # Hardcoded so far, should be taken from Params as well
         if self.Modes.Text and not Symbol in ('escape', 'f4', 'f5', 'f6'): # Hardcoded so far, should be taken from Params as well
             return
-        Callback(Symbol, Modifier)
+        self.OnKeyRegistration(Callback, Symbol, Modifier)
 
     def AddControlKey(self, Key, Callback, Mod = 0):
         if not Key in self.KeysFunctionsDict:
@@ -415,24 +501,28 @@ class GUI:
         self.KeysFunctionsDict[Key][Mod] = Callback
 
     def LoadMenu(self):
+        def AddCommand(Menu, Label, Callback, *args, **kwargs):
+            Menu.add_command(label = Label, command = lambda:self.OnStaticGUIButton(Callback, *args, **kwargs))
+
         MainMenu = Tk.Menu(self.MainWindow)
         FMenu = Tk.Menu(MainMenu, tearoff=0)
-        FMenu.add_command(label="New", command=lambda:self.Open(Ask=False))
-        FMenu.add_command(label="Open", command=lambda:self.Open(Ask=True))
-        FMenu.add_command(label="Save", command=self.SaveBoardData)
-        FMenu.add_command(label="Save As", command=lambda:self.SaveBoardData(SelectFilename = True))
+
+        AddCommand(FMenu, 'New', self.Open, Ask = False)
+        AddCommand(FMenu, 'Open', self.Open, Ask = True)
+        AddCommand(FMenu, 'Save', self.SaveBoardData)
+        AddCommand(FMenu, 'Save as...', self.SaveBoardData, SelectFilename = True)
         FMenu.add_separator()
         FMenu.add_command(label="Exit", command=self.Close)
         MainMenu.add_cascade(label="File", menu=FMenu)
 
         EMenu = Tk.Menu(MainMenu, tearoff=0)
-        EMenu.add_command(label="Undo", command=self.Undo)
-        EMenu.add_command(label="Options", command=self.Options)
+        AddCommand(EMenu, "Undo", self.Undo)
+        AddCommand(EMenu, "Undo", self.Options)
         MainMenu.add_cascade(label="Edit", menu=EMenu)
 
         HMenu = Tk.Menu(MainMenu, tearoff=0)
-        HMenu.add_command(label="Help Index", command=Void)
-        HMenu.add_command(label="About...", command=self.About)
+        AddCommand(HMenu, "Help Index", Void)
+        AddCommand(HMenu, "About...", self.About)
         MainMenu.add_cascade(label="Help", menu=HMenu)
 
         self.MainWindow.config(menu=MainMenu)
@@ -461,21 +551,21 @@ class GUI:
 
     def LoadControls(self):
         self._Icons['WSImage'] = Tk.PhotoImage(file="./images/WireStraight.png")
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireStraight", image=self._Icons['WSImage'], height = 30, width = 30, command = lambda:self.SetWireBuildMode(0))
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireStraight", image=self._Icons['WSImage'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.SetWireBuildMode, 0))
         self._Icons['WDImage'] = Tk.PhotoImage(file="./images/WireDiagonal.png")
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireDiagonal", image=self._Icons['WDImage'], height = 30, width = 30, command = lambda:self.SetWireBuildMode(1))
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireDiagonal", image=self._Icons['WDImage'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.SetWireBuildMode, 1))
         self.WireButtons = (self.MainFrame.Board.Controls.WireStraight, self.MainFrame.Board.Controls.WireDiagonal)
         self.SetWireBuildMode(Params.GUI.Behaviour.DefaultWireBuildMode)
         self._Icons['DotImage'] = Tk.PhotoImage(file="./images/Dot.png").subsample(10)
         self._Icons['CrossedDotImage'] = Tk.PhotoImage(file="./images/CrossedDot.png").subsample(10)
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexionButton", image=self._Icons['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self.ToggleConnexion())
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexionButton", image=self._Icons['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self.OnStaticGUIButton(self.ToggleConnexion))
 
         self.MainFrame.Board.Controls.AddWidget(ttk.Separator, orient = 'vertical')
 
         self._Icons['RLImage'] = Tk.PhotoImage(file="./images/RotateLeft.png").subsample(8)
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateLeft", image=self._Icons['RLImage'], height = 30, width = 30, command = lambda:self.Rotate(0))
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateLeft", image=self._Icons['RLImage'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.Rotate, 0))
         self._Icons['RRImage'] = Tk.PhotoImage(file="./images/RotateRight.png").subsample(8)
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateRight", image=self._Icons['RRImage'], height = 30, width = 30, command = lambda:self.Rotate(1))
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateRight", image=self._Icons['RRImage'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.Rotate, 1))
 
     def LoadView(self):
         self.DisplayFigure = matplotlib.figure.Figure(figsize=Params.GUI.View.FigSize, dpi=Params.GUI.View.DPI)
@@ -497,27 +587,13 @@ class GUI:
 
         self.MainWidget = self.DisplayCanvas.get_tk_widget()
 
-    def PlotView(self):
-        self.Plots = {}
-        self.Plots['Cursor'] = self.DisplayAx.plot(0,0, marker = 'o', color = self.Modes.Current.Color)[0]
-        if Params.GUI.View.CursorLinesWidth:
-            self.Plots['HCursor'] = self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max], [0,0], linewidth = Params.GUI.View.CursorLinesWidth, color = self.Modes.Current.Color, alpha = 0.3)[0]
-            self.Plots['VCursor'] = self.DisplayAx.plot([0,0], [-Params.Board.Max, Params.Board.Max], linewidth = Params.GUI.View.CursorLinesWidth, color = self.Modes.Current.Color, alpha = 0.3)[0]
-        RLE = Params.GUI.View.RefLineEvery
-        if RLE:
-            NLines = Params.Board.Size // RLE
-            self.Plots['HLines']=[self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max], 
-                                 [nLine*RLE, nLine*RLE], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
-            self.Plots['VLines']=[self.DisplayAx.plot([nLine*RLE, nLine*RLE], 
-                                 [-Params.Board.Max, Params.Board.Max], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
-
     def LoadDisplayToolbar(self):
         self.MainFrame.Board.DisplayToolbar.AddFrame("Buttons", Side = Tk.TOP, Border = False)
         self.MainFrame.Board.DisplayToolbar.AddFrame("Labels", Border = False)
         self.MainFrame.Board.DisplayToolbar.Buttons.RemoveDefaultName()
         self.DisplayToolbar = NavigationToolbar2Tk(self.DisplayCanvas, self.MainFrame.Board.DisplayToolbar.Buttons.frame)
-        NewCommands = {'!button':self.SetView, # Remap Home button
-                       '!checkbutton2':self.NextZoom # Remap zoom button
+        NewCommands = {'!button':lambda:self.OnStaticGUIButton(self.SetView), # Remap Home button
+                        '!checkbutton2':lambda:self.OnStaticGUIButton(self.NextZoom) # Remap zoom button
         }
         RemovedButtons = ('!button2', # Left arrow
                           '!button3', # Right arrow
@@ -536,11 +612,12 @@ class GUI:
 
     def LoadRightPanel(self):
         self.MainFrame.Right_Panel.AddFrame("Board_Inputs", row = 0, column = 0, columnspan = 2, Border = True, NoName = True)
-        self.BoardInputEntry = SEntry(self.MainFrame.Right_Panel.Board_Inputs.frame, "Board Input", NBits = 0, BitStart = 0, TotalWidth = Params.GUI.RightPanel.Width)
+        self.BoardInputEntry = SEntry(self.MainFrame.Right_Panel.Board_Inputs.frame, "Board Input", Bits = tuple(), TotalWidth = Params.GUI.RightPanel.Width)
         self.MainFrame.Right_Panel.AddFrame("Board_Outputs", row = 1, column = 0, columnspan = 2, Border = True, NoName = True)
-        self.BoardOutputLabel = SLabel(self.MainFrame.Right_Panel.Board_Outputs.frame, "Board Output", NBits = 0, BitStart = 0, TotalWidth = Params.GUI.RightPanel.Width)
+        self.BoardOutputLabel = SLabel(self.MainFrame.Right_Panel.Board_Outputs.frame, "Board Output", Bits = tuple(), TotalWidth = Params.GUI.RightPanel.Width)
 
-        self.BoardIOWidgets = {self.BoardInputEntry, self.BoardOutputLabel}
+        self.BoardInputWidgets =  {self.BoardInputEntry}
+        self.BoardOutputWidgets = {self.BoardOutputLabel}
 
         self.MainFrame.Right_Panel.AddFrame("Input_Pins", row = 2, column = 0, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
         self.MainFrame.Right_Panel.AddFrame("Output_Pins", row = 2, column = 1, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
@@ -562,9 +639,9 @@ class GUI:
                     Add = f' ({ControlKey})'
                     self.AddControlKey(ControlKey, lambda key, mod, CompClass = CompClass: self.StartComponent(CompClass))
                 self.CompToButtonMap[CompClass] = CompFrame.AddWidget(Tk.Button, f"{BookName}.{CompName}", row = row, column = column, text = CompName+Add, height = Params.GUI.Library.ComponentHeight, 
-                                                                        command = lambda CompClass = CompClass: self.StartComponent(CompClass))
+                                                                        command = lambda CompClass = CompClass: self.OnComponentButtonClick(CompClass))
 
-    def ColorLibComponent(self, Button):
+    def SetLibraryButtonColor(self, Button):
         if Button == self.CurrentCompButton:
             return
         if not self.CurrentCompButton is None:
