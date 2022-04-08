@@ -23,28 +23,28 @@ class GUI:
     UpdateLocked = False
 
     def Trigger(func):
-        def Wrap(self, *args, **kwargs):
+        def WrapTrigger(self, *args, **kwargs):
             UpdateWhenFinished = False
             if not self.UpdateLocked:
                 self.UpdateLocked = True
                 UpdateWhenFinished = True
-            else:
-                print(f"Trigger ignored : {func.__name__}")
+#            else:
+#                print(f"Trigger ignored : {func.__name__}")
             res = func(self, *args, **kwargs)
             if UpdateWhenFinished:
                 self.SolveUpdateRequests(func)
             return res
-        return Wrap
+        return WrapTrigger
     def Update(*UpdateFunctions):
         def Wrapper(func):
-            def Wrap(self, *args, **kwargs):
+            def WrapUpdate(self, *args, **kwargs):
                 for UpdateFunction in UpdateFunctions:
                     if UpdateFunction in self.UpdateFunctions:
                         self.UpdateFunctions[UpdateFunction].add(func.__name__)
                     else:
                         self.UpdateFunctions[UpdateFunction] = {func.__name__}
                 return func(self, *args, **kwargs)
-            return Wrap
+            return WrapUpdate
         return Wrapper
 
     def LocalView(self):                                # Update of the plot (colors, style, ... with no effect on the cursor, the highlight or the level values
@@ -89,15 +89,15 @@ class GUI:
         self.BoardOutputLabel.Bits = tuple(range(len(self.CH.OutputPins)))
 
     def SolveUpdateRequests(self, func):
-        if not self.UpdateFunctions:
-            print(f"{func.__name__} induced no update")
-        else:
-            print(f"Updates triggered by {func.__name__}:")
+        if self.UpdateFunctions:
+#            print(f"Updates triggered by {func.__name__}:")
             while self.UpdateFunctions:
                 UpdateFunction, Callers = self.UpdateFunctions.popitem()
-                print(f" -> {UpdateFunction.__name__} called by {', '.join(Callers)}")
+#                print(f" -> {UpdateFunction.__name__} called by {', '.join(Callers)}")
                 UpdateFunction(self)
         self.UpdateLocked = False
+#        else:
+#            print(f"{func.__name__} induced no update")
 
     def __init__(self, Args):
         self.MainWindow = Tk.Tk()
@@ -217,11 +217,16 @@ class GUI:
             BoardName = self.FH.Filename.split('/')[-1]
         self.MainWindow.title(Params.GUI.Name + f" ({BoardName})")
 
-    @Update(LocalView)
     @Modes.Build
-    def StartComponent(self, CClass):
+    @Update(LocalView)
+    def StartComponent(self, CClass, Rotation = None):
+        if Rotation is None:
+            if CClass == self.Library.Wire:
+                Rotation = Params.GUI.Behaviour.DefaultWireRotation
+            else:
+                Rotation = 0
         self.SetLibraryButtonColor(self.CompToButtonMap[CClass])
-        self.TmpComponents.add(CClass(self.Cursor, self.Rotation))
+        self.TmpComponents.add(CClass(self.Cursor, Rotation))
 
     @Update(LocalView)
     def ClearTmpComponents(self):
@@ -233,7 +238,6 @@ class GUI:
         self.Cursor += Move
         self.OnMove()
 
-    @Update(LocalView)
     def OnMove(self):
         self.UpdateCursorPlot()
         Displacement = np.maximum(0, self.Cursor + Params.GUI.View.DefaultMargin - (self.LeftBotLoc + self.Size))
@@ -277,7 +281,7 @@ class GUI:
         self.LeftBotLoc = self.Cursor - (self.Size // 2)
         self.SetBoardLimits()
 
-    @Update(LocalView) 
+    @Update(LocalView, CursorInfo) 
     def UpdateCursorPlot(self):
         self.Plots['Cursor'].set_data(*self.Cursor)
         if Params.GUI.View.CursorLinesWidth:
@@ -308,7 +312,6 @@ class GUI:
                     if self.Library.IsWire(Component):
                         Component.Switch()
 
-    @Update(GUILayout)
     def Set(self):
         Joins = self.CH.HasItem(self.Cursor)
         if self.Modes.Build:
@@ -316,18 +319,18 @@ class GUI:
                 raise Exception(f"{len(self.TmpComponents)} component(s) currently in memory for BuildMode")
             Component = self.TmpComponents.pop()
             if self.CH.Register(Component):
-                self.MoveHighlight()
-                self.ConfirmComponentRegister(Component)
+                self.ConfirmComponentRegister(Component, Joins)
             else:
                 self.TmpComponents.add(Component)
         elif self.Modes.Default:
             if self.CH.HasItem(self.Cursor) and self.CH.FreeSlot(self.Cursor):
                 self.StartComponent(self.Library.Wire)
 
-    @Update(GUILayout)
-    def ConfirmComponentRegister(self, Component):
+    @Update(GUILayout, BoardState)
+    def ConfirmComponentRegister(self, Component, Joins):
+        self.MoveHighlight()
         if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(Component) or (not Params.GUI.Behaviour.StopWireOnJoin) or not Joins):
-            self.StartComponent(Component.__class__)
+            self.StartComponent(Component.__class__, Component.Rotation)
         else:
             self.Modes.Default(Message='end of build')
 

@@ -46,8 +46,9 @@ class Colors:
         Modes = {
             0: C.yellow,    # Building
             1: C.white,     # Fixed, undefined.
-            2: C.yellow,       # Being removed
+            2: C.yellow,    # Being removed
             3: C.white,     # Selected
+            4: C.red        # Removed, color should never appear
         }
         Levels = {
             Levels.Undef    : C.white,
@@ -59,16 +60,14 @@ class Colors:
 class Params:
     class Board:
         Size = 1000
-        ComponentPinLength = 1
-        ComponentMinWidth = 3
-        ComponentMinHeight = 3
-        CasingsOwnPinsBases = False
+        Max = None
         GroupDefaultLevel = Levels.Low
         AllowStableRecursiveLoops = True
     class GUI:
         Name = 'Logic Gates Simulator'
         DataFolder = '~/Documents/PyGPUFiles/'
         BoardSaveSubfolder = 'Projects/'
+        DataAbsPath = None
         class Library:
             Columns = 2
             ComponentHeight = 2
@@ -90,17 +89,29 @@ class Params:
         class PlotsWidths:
             HighlightFactor = 2.5
             Wire = 1
-            Pin = 1
             Connexion = 4
             Casing = 0.4
+            CasingPin = 0.4
+            BoardPin = 0.4
             CNameFontsize = 15
+        class Dimensions:
             BoardPinBoxLength = 4
             BoardPinBoxHeight = 1
+            CasingCornerOffset = 0.4
+            CasingPinBaseLength = None
+            CasingPinBonusLength = 0
+            CasingPinTotalLength = None
+            CasingPinArrowLength = 0.4
+            CasingPinArrowHeight = 0.5
+            CasingPinTextOffset = 0.5 
+            ComponentMinVirtualWidth = 1
+            ComponentMinVirtualHeight = 0
         class PlotsStyles:
             Wire = '-'
-            Pin = '-'
+            CasingPin = '-'
             Connexion = '8'
             Casing = '-'
+            BoardPin = '-'
             PinNameLevelColored = True
             AlphaSelection = 0.4
         class Controls:
@@ -133,12 +144,25 @@ class Params:
             AutoContinueComponent = True
             StopWireOnJoin = True
             DefaultWireBuildMode = 1
+            DefaultWireRotation = 0
             DefaultBoardPinBuildMode = 0
             AskDeleteConfirmation = False
             AutoSwitchBoardPins = False # Disabled for now as it cannot be changed afterwards
 
-_L = Params.GUI.PlotsWidths.BoardPinBoxLength
-_H = Params.GUI.PlotsWidths.BoardPinBoxHeight/2
+Params.Board.Size = Params.Board.Size - (Params.Board.Size & 1)
+Params.Board.Max = Params.Board.Size // 2
+Params.GUI.DataAbsPath = os.path.realpath(os.path.expanduser(Params.GUI.DataFolder))
+Params.GUI.Dimensions.CasingPinBaseLength = 1.-Params.GUI.Dimensions.CasingCornerOffset
+Params.GUI.Dimensions.CasingPinTotalLength = Params.GUI.Dimensions.CasingPinBaseLength + Params.GUI.Dimensions.CasingPinBonusLength
+if Params.GUI.Dimensions.CasingPinTotalLength == 0:
+    Params.GUI.Dimensions.CasingPinTotalLength = 1
+    Params.GUI.Dimensions.CasingPinBonusLength = 1
+
+_L = Params.GUI.Dimensions.BoardPinBoxLength
+_H = Params.GUI.Dimensions.BoardPinBoxHeight/2
+_l = Params.GUI.Dimensions.CasingPinTotalLength
+_la = Params.GUI.Dimensions.CasingPinArrowLength
+_h = Params.GUI.Dimensions.CasingPinArrowHeight/2
 
 class PinDict:
     W,E,N,S = 'WENS'
@@ -156,8 +180,10 @@ class PinDict:
                                         [0, -_H], 
                                         [0, _H], 
                                         [_L-_H, _H]]))
+    CasingPinStaticCorners = (np.array([[0,0],
+                                        [-_la, _h], 
+                                        [-_la, -_h]]),
+                              np.array([[_l, 0],
+                                        [_l-_la, -_h], 
+                                        [_l-_la, _h]]))
 
-
-Params.Board.Size = Params.Board.Size - (Params.Board.Size & 1)
-Params.Board.Max = Params.Board.Size // 2
-Params.GUI.DataAbsPath = os.path.realpath(os.path.expanduser(Params.GUI.DataFolder))

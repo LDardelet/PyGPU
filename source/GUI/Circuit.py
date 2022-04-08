@@ -42,23 +42,30 @@ class ComponentsHandlerC(StorageItem):
     def ComputeChain(self):
         Log("Updating chain")
 
-    def UpdateRequest(self, Component):
+    def CallRequest(self, Component, Backtrace = None):
         if not self.LiveUpdate:
             return
-        if self.Ready:
-            Component()
+        if Backtrace is None:
+            Backtrace = []
         else:
-            self.AwaitingUpdates.add(Component)
+            if Component in Backtrace:
+                LogWarning(f"{Component} entered an unstable recursive loop involving {Backtrace}")
+                return
+        if self.Ready:
+            Component(list(Backtrace))
+        else:
+            self.AwaitingUpdates.add((Component, tuple(Backtrace)))
 
     def SolveRequests(self):
-        UpdatedComponents = set()
         while self.AwaitingUpdates:
-            Component = self.AwaitingUpdates.pop()
-            if Component in UpdatedComponents:
-                LogWarning(f"{Component} entered an unstable recursive loop")
-                break
-            Component()
-            UpdatedComponents.add(Component)
+            Component, Backtrace = self.AwaitingUpdates.pop()
+            try:
+                Component(list(Backtrace))
+            except:
+                print(Backtrace)
+                print(Component)
+                print(Component.Group)
+                return
 
     @Modifies
     @Building
@@ -81,7 +88,7 @@ class ComponentsHandlerC(StorageItem):
         self.SetComponent(NewComponent)
         NewComponent.Fix()
 
-        self.UpdateRequest(NewComponent)    
+        self.CallRequest(NewComponent, Backtrace = ['Register'])    
         return True
 
     @Modifies
@@ -105,7 +112,7 @@ class ComponentsHandlerC(StorageItem):
             self.SetComponent(Child)
 
         self.RegisterMap(Component)
-        if not isinstance(Component, ComponentsModule.CasedComponentC) or Params.Board.CasingsOwnPinsBases:
+        if not isinstance(Component, ComponentsModule.CasedComponentC):
             GroupC(Component)
         else:
             self.CasingGroup.AddComponent(Component)
@@ -197,7 +204,7 @@ class ComponentsHandlerC(StorageItem):
         if Pin.Type == PinDict.Input:
             Pin.Side = PinDict.W
             Pin.TypeIndex = len(self.InputPins)
-            Pin.Level = (self.Input >> Pin.TypeIndex) & 0b1
+            Pin.BoardInputSetLevel((self.Input >> Pin.TypeIndex) & 0b1, ['AddBoardPin'])
         else:
             Pin.TypeIndex = len(self.OutputPins)
             Pin.Side = PinDict.E
@@ -237,7 +244,7 @@ class ComponentsHandlerC(StorageItem):
     @Modifies
     def Input(self, Input):
         for Pin in self.InputPins:
-            Pin.Level = Input & 0b1
+            Pin.BoardInputSetLevel(Input & 0b1, ['BoardInput'])
             Input = Input >> 1
     @property
     def Output(self):
@@ -332,7 +339,7 @@ class ComponentsHandlerC(StorageItem):
     def CursorGroups(self, Location):
         return list({self.Components[ID].Group for ID in self.Map[Location[0], Location[1],:-1] if ID})
     def CursorComponents(self, Location):  # We remove ComponentPin from single component highlight as nothing can be done with them alone
-        return list({self.Components[ID] for ID in self.Map[Location[0], Location[1],:-1] if (ID and not isinstance(self.Components[ID], ComponentsModule.ComponentPinC))})
+        return list({self.Components[ID] for ID in self.Map[Location[0], Location[1],:-1] if (ID and not isinstance(self.Components[ID], ComponentsModule.CasingPinC))})
     def CursorCasings(self, Location):
         return list({Component for Component in self.Casings.values() if Location in Component})
     def CursorConnected(self, Location):
@@ -375,7 +382,7 @@ class ComponentsHandlerC(StorageItem):
         return (self.Map[Location[0], Location[1], :8] == 0).any()
     def Wired(self, Location):
         for ID in self.Map[Location[0], Location[1], :8]:
-            if ID and (isinstance(self.Components[ID], ComponentsModule.WireC) or isinstance(self.Components[ID], ComponentsModule.ComponentPinC)):
+            if ID and (isinstance(self.Components[ID], ComponentsModule.WireC) or isinstance(self.Components[ID], ComponentsModule.CasingPinC)):
                 return True
         return False
     def HasItem(self, Location):
@@ -481,9 +488,9 @@ class GroupC(StorageItem):
         if isinstance(NewComponent, ComponentsModule.WireC):
             self.Wires.add(NewComponent)
         if not Level is None:
-            self.SetLevel(Level, NewComponent)
+            self.SetLevel(Level, NewComponent, ['AddGroupComponent'])
         else:
-            self.TriggerComponentLevel(NewComponent)
+            self.TriggerComponentLevel(NewComponent, ['AddGroupComponent'])
 
     def RemoveComponent(self, Component, AutoSet = True, AutoRemove = True):
         Component.Group = None
@@ -495,44 +502,44 @@ class GroupC(StorageItem):
         if not self.Components and AutoRemove:
             del self.Handler.Groups[self.ID]
 
-    def SetLevel(self, Level = None, Component = None):
-        if not Level is None:
-            print(self, self.Level, 'set to', Levels.Names[Level], 'by', Component)
-        else:
-            print(self, self.Level, "to default set")
+    def SetLevel(self, Level, Component, Backtrace, Verbose = False):
+        if Verbose:
+            if not Level is None:
+                print(self, self.Level, 'set to', Levels.Names[Level], 'by', Component)
+            else:
+                print(self, self.Level, "to default set")
         if Component != None:
             self.SetBy[Component] = Level
         PrevLevel = self.Level
         if len(self.SetBy) == 1:
             self.Level = Level
         elif len(self.SetBy) == 0:
-            if self.Components:
-                self.UnsetWarning() # Careful, SetBy[C] = Undef is possible, in the case of an input board pin with DefinedValue = Undef. 
+            if self.StillUseful:
+                self.UnsetWarning()
             self.Level = Levels.Undef
         else:
             self.MultipleSetWarning()
             self.Level = Levels.Multiple
         if PrevLevel != self.Level:
-            print(" -> Components Update")
             for Component in self.Components:
-                self.TriggerComponentLevel(Component)
+                self.TriggerComponentLevel(Component, Backtrace)
         else:
             if not Component is None:
-                self.TriggerComponentLevel(Component)
+                self.TriggerComponentLevel(Component, Backtrace)
     def RemoveLevelSet(self, Component):
         if not Component in self.SetBy:
             raise Exception("{Component} was not level setter for {self}")
         del self.SetBy[Component]
         if not self.SetBy:
-            self.SetLevel()
+            self.SetLevel(None, None, [f'RemoveGroupComponent(1) {self}'])
         else:
             PickedComponent = list(self.SetBy.keys())[0]
-            self.SetLevel(self.SetBy[PickedComponent], PickedComponent)
+            self.SetLevel(self.SetBy[PickedComponent], PickedComponent, [f'RemoveGroupComponent(2) {self}'])
 
-    def TriggerComponentLevel(self, Component):
+    def TriggerComponentLevel(self, Component, Backtrace):
         Component.UpdateStyle()
         if Component.TriggersParent:
-            self.Handler.UpdateRequest(Component.Parent)
+            self.Handler.CallRequest(Component.Parent, Backtrace)
     def UnsetWarning(self):
         LogWarning(f"Group {self.ID} not set anymore")
     def MultipleSetWarning(self):
@@ -556,7 +563,7 @@ class GroupC(StorageItem):
     def Fix(self):
         Switched = set()
         for Component in self.Components:
-            if type(Component) != ComponentsModule.ComponentPinC:
+            if type(Component) != ComponentsModule.CasingPinC:
                 Switched.update(Component.Fix())
         return Switched
     def Select(self):
@@ -587,8 +594,11 @@ class GroupC(StorageItem):
         #else:
         #    LevelStr = '(multiple sets)'
         return f"Group {self.ID}"
+    @property
+    def StillUseful(self):
+        return len(self.Components) > len(self.Connexions)
     def __len__(self): # We do not consider connexions as part of the length of a group
-        return len(self.Components.difference(self.Connexions))
+        return len(self.Components) - len(self.Connexions)
     def __contains__(self, Component):
         return Component in self.Components
 
@@ -669,7 +679,7 @@ class CLibrary:
         self.Wire = ComponentsModule.WireC
 
         self.AddSpecialStorageClass(ComponentsModule.ConnexionC)
-        self.AddSpecialStorageClass(ComponentsModule.ComponentPinC)
+        self.AddSpecialStorageClass(ComponentsModule.CasingPinC)
         self.AddSpecialStorageClass(ComponentsModule.InputPinC)
         self.AddSpecialStorageClass(ComponentsModule.OutputPinC)
         self.AddSpecialStorageClass(ComponentsModule.BoardPinC)

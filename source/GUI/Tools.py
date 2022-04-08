@@ -5,6 +5,8 @@ from functools import cached_property
 from Console import Log
 from Values import Colors, Params, PinDict
 
+ForceReload = True
+
 def Void(*args, **kwargs):
     pass
     #print(args[0])
@@ -23,7 +25,7 @@ class ModeC:
     def __call__(self, func = None, Message = '', Advertise = False): # Both a call and a wrapper
         if not func is None:
             def Wrap(*args, **kwargs):
-                if not bool(self): # Wrapper only changes if necessary
+                if not bool(self) or ForceReload: # Wrapper only changes if necessary
                     self(Message = f'wrap of {func.__name__}')
                 func(*args, **kwargs)
             return Wrap

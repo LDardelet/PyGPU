@@ -11,7 +11,8 @@ class StatesC(StorageItem):
     Names = ['Building',
              'Fixed',
              'Removing', 
-             'Selected']
+             'Selected',
+             'Removed']
     LibRef = "StatesC"
     def __init__(self):
         self.StoredAttribute('States', set())
@@ -124,6 +125,7 @@ class ComponentBase(StorageItem):
         return {self}
     @Parenting
     def destroy(self):
+        self.State = States.Removed
         for plot in self.Plots:
             plot.remove()
 
@@ -189,8 +191,8 @@ class ComponentBase(StorageItem):
     @property
     def InputReady(self): # Base components are not ready by default as they should not be updated (wires, connexions, ...)
         return False
-    def __call__(self):
-        return False
+    def __call__(self, Backtrace):
+        return 
     @property
     def Level(self):
         if self.Group is None:
@@ -248,7 +250,7 @@ class BoardPinC(ComponentBase):
     BuildMode = Params.GUI.Behaviour.DefaultBoardPinBuildMode
     def __init__(self, Location, Rotation):
         super().__init__(Location, Rotation)
-        self.StoredAttribute('_Type', self.__class__.BuildMode)      # Input or output. Output by default, avoids to SetLevel group (board inputs are components inputs, thus are set externally)
+        self.StoredAttribute('_Type', self.__class__.BuildMode) 
         self.StoredAttribute('DefinedLevel', Levels.Undef)
         self.StoredAttribute('_PinLabelRule', 0b11)
         self.StoredAttribute('Side', None)
@@ -260,11 +262,11 @@ class BoardPinC(ComponentBase):
 
     def PlotInit(self):
         Color, Alpha = self.Color, self.Alpha
-        self.plot(*np.zeros((2,2), dtype = int), color = Color, linestyle = Params.GUI.PlotsStyles.Pin, linewidth = Params.GUI.PlotsWidths.Pin, alpha = Alpha)
+        self.plot(*np.zeros((2,2), dtype = int), color = Color, linestyle = Params.GUI.PlotsStyles.BoardPin, linewidth = Params.GUI.PlotsWidths.BoardPin, alpha = Alpha)
         self.text(*np.zeros(2, dtype = int), s=self.Label, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.Rotation+2))
 
         for BoxSide in range(5):
-            self.plot(*np.zeros((2,2), dtype = int), color = Color, linestyle = Params.GUI.PlotsStyles.Casing, linewidth = Params.GUI.PlotsWidths.Casing, alpha = Alpha)
+            self.plot(*np.zeros((2,2), dtype = int), color = Color, linestyle = Params.GUI.PlotsStyles.BoardPin, linewidth = Params.GUI.PlotsWidths.BoardPin, alpha = Alpha)
         self.UpdateLocation()
     def UpdateLocation(self):
         Loc = self.Location
@@ -280,6 +282,7 @@ class BoardPinC(ComponentBase):
     def Switch(self):
         if not self.State.Building:
             raise Exception(f"{self} switched while not building")
+        self.Rotation += 2
         self.__class__.BuildMode = 1-self.__class__.BuildMode
         self.Type = 1-self.Type
 
@@ -294,15 +297,8 @@ class BoardPinC(ComponentBase):
         self.Location = np.array(Cursor)
         self.UpdateLocation()
 
-    @property
-    def Level(self):
-        return self.Group.Level
-    @Level.setter
-    def Level(self, Level):
-        if self.Type == PinDict.Input:
-            self.Group.SetLevel(Level, self)
-        else:
-            raise Exception("Attempting to set level of a board output")
+    def BoardInputSetLevel(self, Level, Backtrace):
+        self.Group.SetLevel(Level, self, Backtrace)
     @property
     def Valid(self):
         return self.Level in Levels.Valid
@@ -340,7 +336,7 @@ class BoardPinC(ComponentBase):
         if self.State.Building:
             return
         if Value == PinDict.Input:
-            self.Group.SetLevel(self.DefinedLevel, self)
+            self.Group.SetLevel(self.DefinedLevel, self, [f'{self} TypeSet'])
         elif Value == PinDict.Output:
             self.Group.RemoveLevelSet(self)
         else:
@@ -370,7 +366,7 @@ class BoardPinC(ComponentBase):
         return self.Location.reshape((1,2))
 
     def __repr__(self):
-        return f"{PinDict.PinTypeNames[self.Type]} {self.CName} " + self.Label
+         return f"{PinDict.PinTypeNames[self.Type]} {self.CName} " + self.Label
 
 class CasedComponentC(ComponentBase): # Template to create any type of component
     InputPinsDef = None
@@ -388,66 +384,80 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
 
         self.Start()
 
-        for nPin, ((Side, Index), Name) in enumerate(self.InputPinsDef + self.OutputPinsDef):
+        for nPin, ((Side, SideIndex), Name) in enumerate(self.InputPinsDef + self.OutputPinsDef):
             if nPin < len(self.InputPinsDef):
                 PinsList = self.InputPins
                 PinClass = InputPinC
             else:
                 PinsList = self.OutputPins
                 PinClass = OutputPinC
-            Pin = PinClass(self, Side, Index, Name)
+            Pin = PinClass(self, Side, SideIndex, nPin, Name)
             self.Children.add(Pin)
             PinsList.append(Pin)
 
     def Start(self):
         if self.Callback is None:
             if self.Board is None:
-                raise ValueError("Component must have exactly a callback or an inner schematics to run (0 given)")
+                raise ValueError("Component must have exactly a callback or an inner schematics to run (none given)")
             self.Run = self.Board.Run
         else:
             if not self.Board is None:
-                raise ValueError("Component must have exactly a callback or an inner schematics to run (2 given)")
+                raise ValueError("Component must have exactly a callback or an inner schematics to run (both given)")
             self.Run = self.__class__.Callback
 
         super().Start()
 
     @cached_property
-    def Width(self):
-        Width = 1
-        for (Side, Index), Name in self.InputPinsDef+self.OutputPinsDef:
-            if Side == PinDict.W or Side == PinDict.E:
-                Width = max(Width, Index+1)
+    def VirtualWidth(self):
+        Width = Params.GUI.Dimensions.ComponentMinVirtualWidth
+        for (Side, SideIndex), Name in self.InputPinsDef+self.OutputPinsDef:
+            if Side == PinDict.N or Side == PinDict.S:
+                Width = max(Width, SideIndex)
         if self.ForceWidth:
             if Width > self.ForceWidth:
                 raise ValueError(f"Unable to place all pins on component {self.CName} with constrained width {self.ForceWidth}")
             return self.ForceWidth
         else:
-            return max(Width, Params.Board.ComponentMinWidth)
+            return Width
+    @cached_property
+    def Width(self):
+        return self.VirtualWidth + 2*Params.GUI.Dimensions.CasingCornerOffset
 
     @cached_property
-    def Height(self):
-        Height = 1
-        for (Side, Index), Name in self.InputPinsDef+self.OutputPinsDef:
-            if Side == PinDict.N or Side == PinDict.S:
-                Height= max(Height,Index+1)
+    def VirtualHeight(self):
+        Height = Params.GUI.Dimensions.ComponentMinVirtualHeight
+        for (Side, SideIndex), Name in self.InputPinsDef+self.OutputPinsDef:
+            if Side == PinDict.W or Side == PinDict.E:
+                Height= max(Height,SideIndex)
         if self.ForceHeight:
             if Height > self.ForceHeight:
                 raise ValueError(f"Unable to place all pins on component {self.CName} with constrained height {self.ForceHeight}")
             return self.ForceHeight
         else:
-            return max(Height, Params.Board.ComponentMinHeight)
+            return Height
+    @cached_property
+    def Height(self):
+        return self.VirtualHeight + 2*Params.GUI.Dimensions.CasingCornerOffset
 
     @cached_property
+    def LocToVirtualSWOffset(self):
+        return -np.array([self.VirtualWidth//2, self.VirtualHeight//2])
+    @cached_property
     def LocToSWOffset(self):
-        return -np.array([self.Width//2, self.Height//2])
+        return self.LocToVirtualSWOffset - Params.GUI.Dimensions.CasingCornerOffset
 
-    def __call__(self):
+    def __call__(self, Backtrace):
+        if not self.State.Fixed:
+##            Log(f"{self} ({self.State}) stopping request propagation {Backtrace}")
+            return
         if not self.InputReady:
-            return False
+            for Pin in self.OutputPins:
+                Pin.CasingOutputSetLevel(Levels.Undef, Backtrace + [self])
+            return 
         Level = self.Level
         for Pin, Level in zip(self.OutputPins, self.Run(*self.Input)):
-            Pin.Level = Level
-        return self.Level != Level
+            Pin.CasingOutputSetLevel(Level, Backtrace + [self])
+        return 
     @property
     def Input(self):
         return [Pin.Level for Pin in self.InputPins]
@@ -479,8 +489,8 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
         self.UpdateLocation()
 
     def __contains__(self, Location):
-        P1 = self.Location + RotateOffset(self.LocToSWOffset, self.Rotation)
-        P2 = self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height]), self.Rotation)
+        P1 = self.Location + RotateOffset(self.LocToVirtualSWOffset, self.Rotation)
+        P2 = self.Location + RotateOffset(self.LocToVirtualSWOffset + np.array([self.Width, self.Height]), self.Rotation)
         return (Location >= np.minimum(P1, P2)).all() and (Location <= np.maximum(P1, P2)).all()
 
     @Parenting
@@ -500,7 +510,7 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
 
     @property
     def TextLocation(self):
-        return self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height])/2, self.Rotation)
+        return self.Location + self.LocToSWOffset + np.array([self.Width, self.Height]) / 2
     @property
     def TextRotation(self):
         if self.Symbol:
@@ -509,7 +519,6 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
 
     @property
     def CasingSides(self):
-        Offset = RotateOffset(self.LocToSWOffset, self.Rotation)
         x,y = self.Location + RotateOffset(self.LocToSWOffset, self.Rotation)
         X,Y = self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height]), self.Rotation)
         return (((x,x), (y,Y)), # West
@@ -519,37 +528,33 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
 
     @property
     def AdvertisedLocations(self):
-        if Params.Board.CasingsOwnPinsBases: # Use if pins bases are considered casing parts
-            Locations = np.zeros((9*len(self.Children),3), dtype = int)
-            for nPin, Pin in enumerate(self.Children):
-                Locations[9*nPin:9*(nPin+1),:2] = Pin.PinBaseLocation
-                Locations[9*nPin:9*(nPin+1),-1] = np.arange(9)
-            return Locations
-        else:
-            return np.zeros((0,3), dtype = int)
+        return np.zeros((0,3), dtype = int)
 
-class ComponentPinC(ComponentBase):
+class CasingPinC(ComponentBase):
     CName = "Pin"
     LibRef = "Pin"
-    def __init__(self, Parent, Side, Index, Name = ''):
+    Type = None
+    def __init__(self, Parent, Side, SideIndex, Index, Name = ''):
         super().__init__()
         self.StoredAttribute('Parent', Parent)
         self.StoredAttribute('Side', Side)
+        self.StoredAttribute('SideIndex', SideIndex)
         self.StoredAttribute('Index', Index)
         self.StoredAttribute('Name', Name)
 
         self.Start()
 
     @cached_property
-    def PinBaseOffset(self):
+    def PinLocStaticOffset(self):
+        PinVirtualLength = 1+Params.GUI.Dimensions.CasingPinBonusLength
         if self.Side == PinDict.W:
-            return self.Parent.LocToSWOffset + np.array([0, self.Parent.Height-self.Index-1])
+            return self.Parent.LocToVirtualSWOffset + np.array([-PinVirtualLength, self.Parent.VirtualHeight-self.SideIndex])
         elif self.Side == PinDict.E:
-            return self.Parent.LocToSWOffset + np.array([self.Parent.Width, self.Parent.Height-self.Index-1])
+            return self.Parent.LocToVirtualSWOffset + np.array([self.Parent.VirtualWidth+PinVirtualLength, self.Parent.VirtualHeight-self.SideIndex])
         elif self.Side == PinDict.N:
-            return self.Parent.LocToSWOffset + np.array([1+self.Index, self.Parent.Height])
+            return self.Parent.LocToVirtualSWOffset + np.array([self.SideIndex, self.Parent.VirtualHeight+PinVirtualLength])
         elif self.Side == PinDict.S:
-            return self.Parent.LocToSWOffset + np.array([1+self.Index, 0])
+            return self.Parent.LocToVirtualSWOffset + np.array([self.SideIndex, -PinVirtualLength])
         else:
             raise ValueError(f"Wrong component {self.Parent.CName} definition for pin {self.Index}")
     @cached_property
@@ -559,20 +564,20 @@ class ComponentPinC(ComponentBase):
                 PinDict.W:2,
                 PinDict.S:3}[self.Side]
 
-    @cached_property
-    def Offset(self):
-        return self.PinBaseOffset + Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation)
-    @cached_property
-    def TextBaseOffset(self):
-        return self.PinBaseOffset - Params.Board.ComponentPinLength * RotateOffset(np.array([1, 0]), self.BaseRotation)
+    @property
+    def LocToBaseVector(self):
+        return RotateOffset(np.array([-1, 0]), self.BaseRotation + self.Rotation)
 
     def PlotInit(self):
         Loc = self.Location
         BLoc = self.PinBaseLocation
         Color, Alpha = self.Color, self.Alpha
-        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Color, linestyle = Params.GUI.PlotsStyles.Pin, linewidth = Params.GUI.PlotsWidths.Pin, alpha = Alpha)
+        self.plot([Loc[0], BLoc[0]], [Loc[1], BLoc[1]], color = Color, linestyle = Params.GUI.PlotsStyles.CasingPin, linewidth = Params.GUI.PlotsWidths.CasingPin, alpha = Alpha)
         self.text(*self.TextLocation, s=self.Label, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.Rotation + self.BaseRotation))
 
+        for BoxSide in range(self.ArrowCorners.shape[0]):
+            self.plot(*np.zeros((2,2), dtype = int), color = Color, linestyle = Params.GUI.PlotsStyles.CasingPin, linewidth = Params.GUI.PlotsWidths.CasingPin, alpha = Alpha)
+        self.UpdateLocation()
     def UpdateLocation(self):
         Loc = self.Location
         BLoc = self.PinBaseLocation
@@ -580,9 +585,23 @@ class ComponentPinC(ComponentBase):
         self.Plots[1].set_position(self.TextLocation)
         self.Plots[1].set(**PinNameDict(self.Rotation + self.BaseRotation))
 
+        ArrowCorners = self.ArrowCorners
+        N = ArrowCorners.shape[0]
+        for nCorner in range(N):
+            self.Plots[2+nCorner].set_data(*ArrowCorners[(nCorner, (nCorner+1)%N),:].T)
+
+    @property
+    def ArrowCorners(self):
+        N = PinDict.CasingPinStaticCorners[self.Type].shape[0]
+        Corners = np.zeros((N,2))
+        for nCorner in range(N):
+            Corners[nCorner, :] = RotateOffset(PinDict.CasingPinStaticCorners[self.Type][nCorner, :], self.Rotation) + self.PinBaseLocation
+        return Corners
+
     @property
     def Location(self):
-        return self.Parent.Location + RotateOffset(self.Offset, self.Rotation)
+        #return (self.Parent.Location + RotateOffset(self.PinBaseStaticOffset + Params.GUI.Dimensions.CasingPinTotalLength * self.BaseToLocUnitVector, self.Rotation)).astype(int)
+        return (self.Parent.Location + RotateOffset(self.PinLocStaticOffset, self.Rotation))
     @Location.setter
     def Location(self, Location):
         pass
@@ -597,20 +616,19 @@ class ComponentPinC(ComponentBase):
         return PinLabel(self.Parent.PinLabelRule, self.Index, self.Name)
     @property
     def PinBaseLocation(self):
-        return self.Parent.Location + RotateOffset(self.PinBaseOffset, self.Rotation)
+        return self.Location + Params.GUI.Dimensions.CasingPinTotalLength * self.LocToBaseVector
     @property
     def TextLocation(self):
-        return self.Parent.Location + RotateOffset(self.TextBaseOffset, self.Rotation)
+        return self.Location + (Params.GUI.Dimensions.CasingPinTotalLength+Params.GUI.Dimensions.CasingPinTextOffset) * self.LocToBaseVector
     @property
     def AdvertisedLocations(self):
-        if Params.Board.CasingsOwnPinsBases:
-            return np.array([[self.Location[0], self.Location[1], ((self.Rotation+self.BaseRotation+2)%4)*2]])
-        else:
-            Locations = np.zeros((10,3), dtype = int)
-            Locations[:9,:2] = self.PinBaseLocation
-            Locations[:9,-1] = np.arange(9)
-            Locations[-1,:]  = self.Location[0], self.Location[1], ((self.Rotation+self.BaseRotation+2)%4)*2
-            return Locations
+        NBonusPoints = 9*int(Params.GUI.Dimensions.CasingPinTotalLength)
+        Locations = np.zeros((1+NBonusPoints,3), dtype = int)
+        for nPoint in range(NBonusPoints):
+            Locations[nPoint*9:(nPoint+1)*9,:2] = self.Location + (nPoint+1) * self.LocToBaseVector
+            Locations[nPoint*9:(nPoint+1)*9,-1] = np.arange(9)
+        Locations[-1,:]  = self.Location[0], self.Location[1], ((self.Rotation+self.BaseRotation+2)%4)*2
+        return Locations
     @property
     def AdvertisedConnexions(self):
         return self.Location.reshape((1,2))
@@ -618,22 +636,20 @@ class ComponentPinC(ComponentBase):
     def __repr__(self):
         return f"{self.Parent.CName} {self.CName}" + self.Label
 
-class InputPinC(ComponentPinC):
+class InputPinC(CasingPinC):
     CName = "Input Pin"
     LibRef = "IPin"
+    Type = PinDict.Input
     @property
     def TriggersParent(self):
         return True
 
-class OutputPinC(ComponentPinC):
+class OutputPinC(CasingPinC):
     CName = "Output Pin"
     LibRef = "OPin"
-    @property
-    def Level(self):
-        return self.Group.Level
-    @Level.setter
-    def Level(self, Level):
-        self.Group.SetLevel(Level, self)
+    Type = PinDict.Output
+    def CasingOutputSetLevel(self, Level, Backtrace):
+        self.Group.SetLevel(Level, self, Backtrace)
 
 def PinLabel(PinLabelRule, Index, Name):
     s = ""
