@@ -301,7 +301,7 @@ class BoardPinC(ComponentBase):
         self.Group.SetLevel(Level, self, Backtrace)
     @property
     def Valid(self):
-        return self.Level in Levels.Valid
+        return not (self.Level >> 1)
     @property
     def PinLabelRule(self):
         return self._PinLabelRule
@@ -364,6 +364,10 @@ class BoardPinC(ComponentBase):
     @property
     def AdvertisedConnexions(self):
         return self.Location.reshape((1,2))
+
+    def __contains__(self, Location):
+        Offset = RotateOffset(self.PinBaseLocation - Location, -self.Rotation)
+        return Offset[1] == 0 and Offset[0] > 0 and Offset[0] <= Params.GUI.Dimensions.BoardPinBoxLength
 
     def __repr__(self):
          return f"{PinDict.PinTypeNames[self.Type]} {self.CName} " + self.Label

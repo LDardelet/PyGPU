@@ -1,0 +1,30 @@
+from Circuit import ComponentsHandlerC
+from Storage import FileHandlerC
+
+class BoardC:
+    NewFilename = "Untitled"
+    def __init__(self, Filename = None, ParentBoard = None):
+        self.FileHandler = Storage.FileHandlerC()
+        self.Filename = Filename
+
+        self.ParentBoard = ParentBoard
+
+        if not Filename is None:
+            self.FileHandler.Load(self.Filename)
+            self.ComponentsHandler = self.FileHandler['handler']
+        else:
+            self.ComponentsHandler = ComponentsHandlerC()
+
+    def Save(self, Filename):
+        if not ParentBoard is None:
+            raise Exception("Cannot save a board opened as componente)
+        self.Filename = Filename
+        self.FileHandler.Save(Filename, handler = self.ComponentsHandlerC)
+
+    @property
+    def Name(self):
+        if self.Filename is None:
+            BoardName = self.NewFilename
+        else:
+            BoardName = self.Filename.split('/')[-1]
+

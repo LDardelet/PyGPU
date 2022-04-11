@@ -163,6 +163,7 @@ class SFrame:
         else:
             Child.destroy()
         delattr(self, ChildName)
+        return Child
 
     def RemoveDefaultName(self):
         if hasattr(self, self.DefaultLabelName) and not self.NameDisplayed:
@@ -201,15 +202,16 @@ class BoardIOWidgetBase:
     Level = 0
     Valid = True
     _Bits = tuple()
+    DefaultWidgetName = "Wiget"
     def Push(self, PreviousBoardLevel):
         return (PreviousBoardLevel & ~self.Mask) | self.MaskedLevel
-    def Pull(self, NewBoardLevel, Validity):
+    def Pull(self, NewBoardLevel, NewBoardValidity):
         Level = 0
         self.Valid = True
         for Bit in reversed(self._Bits):
             Level <<= 1
             Level |= (NewBoardLevel >> Bit) & 0b1 
-            if not (Validity >> Bit) & 0b1:
+            if not ((NewBoardValidity >> Bit) & 0b1):
                 self.Valid = False
         self.Level = Level
         self.UpdateRepresentation()
@@ -243,23 +245,26 @@ class BoardIOWidgetBase:
         return (2**self.NBits) - 1
 
 class SEntry(BoardIOWidgetBase):
-    def __init__(self, frame, Name, Bits, TotalWidth):
-        self.frame = frame
+    def __init__(self, Frame, Name, Bits, TotalWidth, ChildName = None):
+        self.frame = Frame.frame
         self.Name = Name
-        self.NameLabel = Tk.Label(frame, text = f"", width = TotalWidth)
+        self.NameLabel = Tk.Label(self.frame, text = f"", width = TotalWidth)
         self.NameLabel.grid(row = 0, column = 0, columnspan = 3, sticky=Tk.EW)
-        self.IntVar = Tk.StringVar(frame, self.int)
-        self.BinVar = Tk.StringVar(frame, self.bin)
-        self.HexVar = Tk.StringVar(frame, self.hex)
-        self.Entries = (Tk.Entry(frame, textvariable = self.IntVar, width = TotalWidth//3),
-                        Tk.Entry(frame, textvariable = self.BinVar, width = TotalWidth//3),
-                        Tk.Entry(frame, textvariable = self.HexVar, width = TotalWidth//3))
+        self.IntVar = Tk.StringVar(self.frame, self.int)
+        self.BinVar = Tk.StringVar(self.frame, self.bin)
+        self.HexVar = Tk.StringVar(self.frame, self.hex)
+        self.Entries = (Tk.Entry(self.frame, textvariable = self.IntVar, width = TotalWidth//3),
+                        Tk.Entry(self.frame, textvariable = self.BinVar, width = TotalWidth//3),
+                        Tk.Entry(self.frame, textvariable = self.HexVar, width = TotalWidth//3))
         for nEntry, (Entry, Callback) in enumerate(zip(self.Entries, (self.IntSet, self.BinSet, self.HexSet))):
             Entry.grid(row = 1, column = nEntry)
             Entry.bind("<Return>", Callback)
         self.frame.bind('<FocusOut>', self.Reset)
 
         self.Bits = Bits
+        if ChildName is None:
+            ChildName = self.DefaultWidgetName
+        Frame.AdvertiseChild(self, ChildName)
 
     def Reset(self, *args, **kwargs): # avoid unconfirmed changes to be propagated
         if self.frame.focus_get() != None:
@@ -315,18 +320,21 @@ class SEntry(BoardIOWidgetBase):
         return self.Name
 
 class SLabel(BoardIOWidgetBase):
-    def __init__(self, frame, Name, Bits, TotalWidth):
-        self.frame = frame
+    def __init__(self, Frame, Name, Bits, TotalWidth, ChildName = None):
+        self.frame = Frame.frame
         self.Name = Name
-        self.NameLabel = Tk.Label(frame, text = f"", width = TotalWidth)
+        self.NameLabel = Tk.Label(self.frame, text = f"", width = TotalWidth)
         self.NameLabel.grid(row = 0, column = 0, columnspan = 3)
-        self.Labels =  (Tk.Label(frame, text=self.int, width = TotalWidth//3, anchor = Tk.W),
-                        Tk.Label(frame, text=self.bin, width = TotalWidth//3, anchor = Tk.W),
-                        Tk.Label(frame, text=self.hex, width = TotalWidth//3, anchor = Tk.W))
+        self.Labels =  (Tk.Label(self.frame, text=self.int, width = TotalWidth//3, anchor = Tk.W),
+                        Tk.Label(self.frame, text=self.bin, width = TotalWidth//3, anchor = Tk.W),
+                        Tk.Label(self.frame, text=self.hex, width = TotalWidth//3, anchor = Tk.W))
         for nLabel, Label in enumerate(self.Labels):
             Label.grid(row = 1, column = nLabel)
 
         self.Bits = Bits
+        if ChildName is None:
+            ChildName = self.DefaultWidgetName
+        Frame.AdvertiseChild(self, ChildName)
 
     def OnBitsChange(self):
         self.NameLabel.configure(text = f"{self.Name} ({self.NBits} bits)")
@@ -353,21 +361,21 @@ class SLabel(BoardIOWidgetBase):
         return self.Name
 
 class SPinEntry(BoardIOWidgetBase):
-    def __init__(self, frame, Pin):
-        self.frame = frame
+    def __init__(self, Frame, Pin, ChildName = None):
+        self.frame = Frame.frame
         self.Pin = Pin
 
         self.Type = self.Pin.Type
 
-        self.IDLabel = Tk.Label(frame, text = self.Pin.Label)
+        self.IDLabel = Tk.Label(self.frame, text = self.Pin.Label)
         self.IDLabel.grid(column = 0, row = 0)
-        self.NameVar = Tk.StringVar(frame, self.Pin.Name)
-        self.NameEntry = Tk.Entry(frame, textvariable = self.NameVar, width = Params.GUI.RightPanel.PinNameEntryWidth)
+        self.NameVar = Tk.StringVar(self.frame, self.Pin.Name)
+        self.NameEntry = Tk.Entry(self.frame, textvariable = self.NameVar, width = Params.GUI.RightPanel.PinNameEntryWidth)
         self.NameEntry.grid(column = 0, row = 1)
         self.NameEntry.bind("<Return>", self.SetName)
         self.frame.bind('<FocusOut>', self.Reset)
 
-        self.SetButton = Tk.Button(frame, bg = Colors.Component.Levels[self.Level], activebackground = Colors.Component.Levels[self.Level], command = self.Switch)
+        self.SetButton = Tk.Button(self.frame, bg = Colors.Component.Levels[self.Level], activebackground = Colors.Component.Levels[self.Level], command = self.Switch)
         self.SetButton.grid(column = 1, row = 0, rowspan = 2)
         if self.Type == PinDict.Output:
             self.SetButton.configure(state = Tk.DISABLED)
@@ -376,6 +384,10 @@ class SPinEntry(BoardIOWidgetBase):
             self.InvalidColor = Colors.GUI.Widget.wrongEntry
 
         self.Bits = (Pin.TypeIndex,)
+
+        if ChildName is None:
+            ChildName = self.DefaultWidgetName
+        Frame.AdvertiseChild(self, ChildName)
 
     def OnBitsChange(self):
         self.frame.grid(row = self.Pin.TypeIndex+1, column = 0)
@@ -405,3 +417,44 @@ class SPinEntry(BoardIOWidgetBase):
 
     def __repr__(self):
         return f"{self.Pin.Label} PinEntry"
+    
+class BoardDisplayC:
+    frame = None
+    ClickCallback = None
+
+    GUIItems = ('DisplayFigure', 
+                'DisplayAx',
+                'DisplayCanvas',
+                'Plots',
+                'xSize',
+                'Cursor',
+                'LowerLeftViewCorner')
+    def __init__(self):
+        self.DisplayFigure = matplotlib.figure.Figure(figsize=Params.GUI.View.FigSize, dpi=Params.GUI.View.DPI)
+        self.DisplayFigure.subplots_adjust(0., 0., 1., 1.)
+        self.DisplayAx = self.DisplayFigure.add_subplot(111)
+        self.DisplayAx.set_aspect("equal")
+        self.DisplayAx.tick_params('both', left = False, bottom = False, labelleft = False, labelbottom = False)
+        self.DisplayAx.set_facecolor((0., 0., 0.))
+
+        self.DisplayCanvas = matplotlib.backends.backend_tkagg.FigureCanvasTkAgg(self.DisplayFigure, self.frame)
+
+        self.Plots = {}
+        Color = 'k'
+        self.Plots['Cursor'] = self.DisplayAx.plot(0,0, marker = 'o', color = Color)[0]
+        if Params.GUI.View.CursorLinesWidth:
+            self.Plots['HCursor'] = self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max], [0,0], linewidth = Params.GUI.View.CursorLinesWidth, color = Color, alpha = 0.3)[0]
+            self.Plots['VCursor'] = self.DisplayAx.plot([0,0], [-Params.Board.Max, Params.Board.Max], linewidth = Params.GUI.View.CursorLinesWidth, color = Color, alpha = 0.3)[0]
+        RLE = Params.GUI.View.RefLineEvery
+        if RLE:
+            NLines = Params.Board.Size // RLE
+            self.Plots['HLines']=[self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max],
+                                 [nLine*RLE, nLine*RLE], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
+            self.Plots['VLines']=[self.DisplayAx.plot([nLine*RLE, nLine*RLE],
+                                 [-Params.Board.Max, Params.Board.Max], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
+
+        self.Cursor = None
+        self.xSize = None
+        self.LowerLeftViewCorner = None
+
+        self.Board = None

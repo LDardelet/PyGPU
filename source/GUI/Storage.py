@@ -7,27 +7,24 @@ from Console import Log, LogSuccess, LogWarning
 
 class FileHandlerC:
     def __init__(self):
-        self.Filename = None
-        self.LoadedData = None
+        self.UnpackedData = None
     
     def Load(self, Filename): # Only loads data from file to memory
-        self.Filename = Filename
         with open(Filename, 'rb') as f:
-            self.RawData = pickle.load(f)
-            self.LoadedData = EntryPoint().StartUnpack(self.RawData)
-        return self.LoadedData
+            RawData = pickle.load(f)
+            self.UnpackedData = EntryPoint().StartUnpack(RawData)
 
-    def Save(self, **kwargs):
-        if self.Filename is None:
+    def Save(self, Filename, **kwargs):
+        if Filename is None:
             raise FileNotFoundError("Must specify a filename to save data")
 
-        self.Data = EntryPoint(**kwargs).StartPack()
-        with open(self.Filename, 'wb') as f:
-            f.write(pickle.dumps(self.Data))
+        PackedData = EntryPoint(**kwargs).StartPack()
+        with open(Filename, 'wb') as f:
+            f.write(pickle.dumps(PackedData))
             LogSuccess("Data saved")
 
     def __getitem__(self, key):
-        return self.Data[key]
+        return self.UnpackedData[key]
 
 BUILDIN = 1
 ARRAY = 2

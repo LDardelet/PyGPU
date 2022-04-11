@@ -12,7 +12,7 @@ class ComponentsHandlerC(StorageItem):
         self.StoredAttribute('MaxID', 0)
         self.StoredAttribute('Components', {})
         self.StoredAttribute('Groups', {})
-        self.StoredAttribute('Casings', {})
+        self.StoredAttribute('Casings', set())
         self.StoredAttribute('Pins', [])
         self.StoredAttribute('InputPins', tuple()) # Tuples for faster looping
         self.StoredAttribute('OutputPins', tuple())
@@ -159,14 +159,14 @@ class ComponentsHandlerC(StorageItem):
         Component.ID = self.MaxID
         self.Components[Component.ID] = Component
         if isinstance(Component, ComponentsModule.CasedComponentC):
-            self.Casings[Component.ID] = Component
+            self.Casings.add(Component)
     def Forget(self, Component):
         for Child in Component.Children:
             self.Forget(Child)
 
         del self.Components[Component.ID]
         if isinstance(Component, ComponentsModule.CasedComponentC):
-            del self.Casings[Component.ID]
+            self.Casings.remomve(Component)
 
     def LinkToOthers(self, NewComponent):
         if isinstance(NewComponent, ComponentsModule.ConnexionC):
@@ -238,7 +238,7 @@ class ComponentsHandlerC(StorageItem):
     def Input(self):
         Input = 0
         for Pin in reversed(self.InputPins): # Use of little-endian norm
-            Input = (Input << 1) | Pin.Level
+            Input = (Input << 1) | (Pin.Level & 0b1)
         return Input
     @Input.setter
     @Modifies
@@ -341,7 +341,7 @@ class ComponentsHandlerC(StorageItem):
     def CursorComponents(self, Location):  # We remove ComponentPin from single component highlight as nothing can be done with them alone
         return list({self.Components[ID] for ID in self.Map[Location[0], Location[1],:-1] if (ID and not isinstance(self.Components[ID], ComponentsModule.CasingPinC))})
     def CursorCasings(self, Location):
-        return list({Component for Component in self.Casings.values() if Location in Component})
+        return list({Component for Component in self.Casings if Location in Component}) + list({Component for Component in self.Pins if Location in Component})
     def CursorConnected(self, Location):
         return bool(self.Map[Location[0], Location[1],-1])
     def CanToggleConnexion(self, Location):

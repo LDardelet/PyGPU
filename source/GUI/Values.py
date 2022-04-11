@@ -13,10 +13,10 @@ class C:
     orange = 'orange'
 
 class Levels:
-    Low      = 0
-    High     = 1
-    Undef    = 2
-    Multiple = 3
+    Low      = 0b00
+    High     = 0b01
+    Undef    = 0b10
+    Multiple = 0b11
     Names = {
         Undef:'?',
         Low  :'-',
@@ -72,7 +72,8 @@ class Params:
             Columns = 2
             ComponentHeight = 2
         class View:
-            FigSize = (7.,7.)
+            FigSize = (7.,6.)
+            FigRatio = None
             DPI = 100
             Zooms = (30, 60, 200)
 
@@ -80,7 +81,7 @@ class Params:
             RefLineEvery = 20
             CursorLinesWidth = 1
         class RightPanel:
-            Width = 80
+            Width = 60
             PinNameEntryWidth = 5
         class Cursor:
             Marker = 'o'
@@ -149,6 +150,7 @@ class Params:
             AskDeleteConfirmation = False
             AutoSwitchBoardPins = False # Disabled for now as it cannot be changed afterwards
 
+Params.GUI.View.FigRatio = Params.GUI.View.FigSize[1] / Params.GUI.View.FigSize[0]
 Params.Board.Size = Params.Board.Size - (Params.Board.Size & 1)
 Params.Board.Max = Params.Board.Size // 2
 Params.GUI.DataAbsPath = os.path.realpath(os.path.expanduser(Params.GUI.DataFolder))
