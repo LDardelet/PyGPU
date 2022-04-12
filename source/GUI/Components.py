@@ -5,7 +5,7 @@ from functools import cached_property
 
 from Values import Colors, Params, PinDict, Levels
 from Console import Log, LogSuccess, LogWarning, LogError
-from Storage import StorageItem
+from Storage import StorageItem, BaseLibrary
 
 class StatesC(StorageItem):
     Names = ['Building',
@@ -260,10 +260,14 @@ class BoardPinC(ComponentBase):
 
         self.Start()
 
+    @property
+    def UsedRotation(self): # Allows to Have Input and output in the same direction natively
+        return self.Rotation + 2*(self.Type == PinDict.Output) 
+
     def PlotInit(self):
         Color, Alpha = self.Color, self.Alpha
         self.plot(*np.zeros((2,2), dtype = int), color = Color, linestyle = Params.GUI.PlotsStyles.BoardPin, linewidth = Params.GUI.PlotsWidths.BoardPin, alpha = Alpha)
-        self.text(*np.zeros(2, dtype = int), s=self.Label, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.Rotation+2))
+        self.text(*np.zeros(2, dtype = int), s=self.Label, LevelPlot = Params.GUI.PlotsStyles.PinNameLevelColored, color = Color, alpha = Alpha, **PinNameDict(self.UsedRotation+2))
 
         for BoxSide in range(5):
             self.plot(*np.zeros((2,2), dtype = int), color = Color, linestyle = Params.GUI.PlotsStyles.BoardPin, linewidth = Params.GUI.PlotsWidths.BoardPin, alpha = Alpha)
@@ -273,7 +277,7 @@ class BoardPinC(ComponentBase):
         BLoc = self.PinBaseLocation
         self.Plots[0].set_data([Loc[0], BLoc[0]], [Loc[1], BLoc[1]])
         self.Plots[1].set_position(self.TextLocation)
-        self.Plots[1].set(**PinNameDict(self.Rotation+2))
+        self.Plots[1].set(**PinNameDict(self.UsedRotation+2))
 
         LabelCorners = self.LabelCorners
         for nCorner in range(5):
@@ -282,7 +286,6 @@ class BoardPinC(ComponentBase):
     def Switch(self):
         if not self.State.Building:
             raise Exception(f"{self} switched while not building")
-        self.Rotation += 2
         self.__class__.BuildMode = 1-self.__class__.BuildMode
         self.Type = 1-self.Type
 
@@ -290,7 +293,7 @@ class BoardPinC(ComponentBase):
     def LabelCorners(self):
         Corners = np.zeros((5,2))
         for nCorner in range(5):
-            Corners[nCorner, :] = RotateOffset(PinDict.BoardPinStaticCorners[self.Type][nCorner, :], self.Rotation+2) + self.PinBaseLocation
+            Corners[nCorner, :] = RotateOffset(PinDict.BoardPinStaticCorners[self.Type][nCorner, :], self.UsedRotation+2) + self.PinBaseLocation
         return Corners
     
     def Drag(self, Cursor):
@@ -349,24 +352,24 @@ class BoardPinC(ComponentBase):
         return PinLabel(self.PinLabelRule, self.Index, self.Name)
     @property
     def PinBaseLocation(self):
-        return self.Location + RotateOffset(np.array([-1, 0]), self.Rotation)
+        return self.Location + RotateOffset(np.array([-1, 0]), self.UsedRotation)
     @property
     def TextLocation(self):
-        return self.Location + RotateOffset(np.array([-2, 0]), self.Rotation)
+        return self.Location + RotateOffset(np.array([-2, 0]), self.UsedRotation)
 
     @property
     def AdvertisedLocations(self):
         Locations = np.zeros((10,3), dtype = int)
         Locations[:9,:2] = self.PinBaseLocation
         Locations[:9,-1] = np.arange(9)
-        Locations[-1,:]  = self.Location[0], self.Location[1], ((self.Rotation+2)%4)*2
+        Locations[-1,:]  = self.Location[0], self.Location[1], ((self.UsedRotation+2)%4)*2
         return Locations
     @property
     def AdvertisedConnexions(self):
         return self.Location.reshape((1,2))
 
     def __contains__(self, Location):
-        Offset = RotateOffset(self.PinBaseLocation - Location, -self.Rotation)
+        Offset = RotateOffset(self.PinBaseLocation - Location, -self.UsedRotation)
         return Offset[1] == 0 and Offset[0] > 0 and Offset[0] <= Params.GUI.Dimensions.BoardPinBoxLength
 
     def __repr__(self):
@@ -885,3 +888,12 @@ class ConnexionC(ComponentBase):
         return np.array([[self.Location[0], self.Location[1], -1]])
     def __repr__(self):
         return f"{self.CName} ({self.ID}) @ {self.Location}"
+
+BaseLibrary.Advertise(ConnexionC)
+BaseLibrary.Advertise(CasingPinC)
+BaseLibrary.Advertise(InputPinC)
+BaseLibrary.Advertise(OutputPinC)
+BaseLibrary.Advertise(BoardPinC)
+BaseLibrary.Advertise(StatesC)
+for State in States.States:
+    BaseLibrary.Advertise(State.__class__)

@@ -1,5 +1,6 @@
 import tkinter as Tk
 from tkinter import ttk
+from tkinter import messagebox
 from PIL import Image
 import os, sys
 import sys
@@ -9,7 +10,7 @@ import matplotlib
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
-from Console import ConsoleWidget, Log, LogSuccess, LogWarning, LogError
+from Console import ConsoleWidget, ConsoleText, Log, LogSuccess, LogWarning, LogError
 from Values import Colors, Params, PinDict
 from Tools import Void, ModesDict, ModeC, SFrame, SEntry, SLabel, SPinEntry, BoardIOWidgetBase, BoardDisplayC
 from Circuit import CLibrary
@@ -19,15 +20,13 @@ matplotlib.use("TkAgg")
 
 class GUI:
     Modes = ModesDict() # Here as we need mode decorator
-
+    NewBoardStr = "New board"
     def Trigger(func):
         def WrapTrigger(self, *args, **kwargs):
             UpdateWhenFinished = False
             if not self.UpdateLocked:
                 self.UpdateLocked = True
                 UpdateWhenFinished = True
-#            else:
-#                print(f"Trigger ignored : {func.__name__}")
             res = func(self, *args, **kwargs)
             if UpdateWhenFinished:
                 self.SolveUpdateRequests(func)
@@ -42,15 +41,15 @@ class GUI:
             return WrapUpdate
         return Wrapper
 
-    def LocalView(self):                                # Update of the plot (colors, style, ... with no effect on the cursor, the highlight or the level values
-        self.DisplayCanvas.draw()
-    def BoardState(self): # Formerly Draw()
+    def LocalView(self):
+        self.CurrentDisplay.Canvas.draw()
+    def BoardState(self):
         for BoardInputWidget in self.BoardInputWidgets:
             BoardInputWidget.Pull(self.CH.Input, self.CH.InputValid)
         if self.CH.LiveUpdate:
             for BoardOutputWidget in self.BoardOutputWidgets:
                 BoardOutputWidget.Pull(self.CH.Output, self.CH.OutputValid)
-        self.DisplayCanvas.draw()
+        self.CurrentDisplay.Canvas.draw()
     def CursorInfo(self):
         GroupsInfo = self.CH.GroupsInfo(self.Cursor)
         self.MainFrame.Board.DisplayToolbar.Labels.CursorLabel['text'] = f"{self.Cursor.tolist()}" + bool(GroupsInfo)*": " + self.CH.GroupsInfo(self.Cursor)
@@ -59,21 +58,21 @@ class GUI:
         else:
             Info = str(self.Highlighted)
         self.MainFrame.Board.DisplayToolbar.Labels.HighlightLabel['text'] = f"Highlight: {Info}"
-    def GUILayout(self): # Formerly CheckBoardPins()
-        for Pin, PinEntry in list(self.SetupPins.items()):
+    def GUILayout(self):
+        for Pin, PinEntry in list(self.DisplayedPinsWindgets.items()):
             if Pin not in self.CH.Pins:
                 if Pin.Type == PinDict.Input or PinEntry.Type != Pin.Type:
                     PinPanel = self.MainFrame.Right_Panel.Input_Pins
                     PinSet = self.BoardInputWidgets
                 else:
                     PinPanel = self.MainFrame.Right_Panel.Output_Pins
-                    PinSet = self.BoardInputWidgets
+                    PinSet = self.BoardOutputWidgets
                 PinSet.remove(getattr(PinPanel.Destroy(f"PinFrame{Pin.ID}"), SPinEntry.DefaultWidgetName))
-                del self.SetupPins[Pin]
+                del self.DisplayedPinsWindgets[Pin]
             else: # We ensure the pin is in the right location
                 PinEntry.Bits = (Pin.TypeIndex, )
         for Pin in self.CH.Pins:
-            if Pin not in self.SetupPins:
+            if Pin not in self.DisplayedPinsWindgets:
                 if Pin.Type == PinDict.Input:
                     PinFrame = self.MainFrame.Right_Panel.Input_Pins.AddFrame(f"PinFrame{Pin.ID}", row = Pin.TypeIndex+1, column = 0, Border = True, NoName = True)
                     PinSet = self.BoardInputWidgets
@@ -81,49 +80,46 @@ class GUI:
                     PinFrame = self.MainFrame.Right_Panel.Output_Pins.AddFrame(f"PinFrame{Pin.ID}", row = Pin.TypeIndex+1, column = 0, Border = True, NoName = True)
                     PinSet = self.BoardOutputWidgets
                 PinEntry = SPinEntry(PinFrame, Pin)
-                self.SetupPins[Pin] = PinEntry
+                self.DisplayedPinsWindgets[Pin] = PinEntry
                 PinSet.add(PinEntry)
         self.BoardInputEntry.Bits = tuple(range(len(self.CH.InputPins)))
         self.BoardOutputLabel.Bits = tuple(range(len(self.CH.OutputPins)))
     def BoardsList(self):
         self.BoardsMenu['menu'].delete(0, "end")
-        self.NameToBoardDict = {}
-        self.BoardToNameDict = {}
-        BoardsNames = []
+        Boards = []
+        FoundBoards = set()
 
         def UnpackBoards(Current, Tab = 0, Prefix = '', UnfiledID = 1):
-            for Board in Current.OpenBoards:
-                if Board in self.BoardToNameDict:
+            for Board in Current.LoadedBoards:
+                if Board in FoundBoards:
                     continue
 
                 BoardName = Board.Name
                 if not Board.Filed:
                     BoardName = Board.Name + f'({UnfiledID})'
                     UnfiledID += 1
-                Name = Tab*' ' + Prefix + BoardName + ' (*)'*(Board == self.CurrentBoard)
+                Name = Tab*' ' + Prefix + BoardName
 
-                BoardsNames.append(Name)
-                self.NameToBoardDict[Name] = Board
-                self.BoardToNameDict[Board] = Name
+                Boards.append((Name, Board))
+                FoundBoards.add(Board)
                 UnpackBoards(Board, Tab + 2, '->')
-
         UnpackBoards(self)
-        for BoardName in BoardsNames:
-            self.BoardsMenu['menu'].add_command(label=BoardName, command=lambda *args, **kwargs: self.BoardVar.set(BoardName))
-        self.BoardsMenu['menu'].add_command(label="New board", command=lambda *args, **kwargs: self.Open(New = True))
 
-        self.BoardVar.set(self.BoardToNameDict[self.CurrentBoard])
+        for BoardName, Board in Boards+[(self.NewBoardStr, None)]:
+            self.BoardsMenu['menu'].add_command(label=BoardName, command = lambda *args, Board = Board, self=self, **kwargs:self.MenuSelectBoardName(Board))
+            if Board == self.CurrentBoard:
+                self.BoardVar.set(BoardName)
 
-    def SolveUpdateRequests(self, func):
-#        print(f"Updates triggered by {func.__name__}:")
+    def SolveUpdateRequests(self, func, Log = False):
+        if Log:
+            print(f"Triggered by {func.__name__}")
         for UpdateFunction in self.UpdateFunctions:
             if UpdateFunction.Callers:
-#                print(f" -> {UpdateFunction.__name__} called by {', '.join(UpdateFunction.Callers)}")
+                if Log:
+                    print(f"  * {UpdateFunction.__name__} called by {UpdateFunction.Callers}")
                 UpdateFunction(self)
                 UpdateFunction.Callers.clear()
         self.UpdateLocked = False
-#        else:
-#            print(f"{func.__name__} induced no update")
 
     UpdateFunctions = (BoardsList, GUILayout, CursorInfo, BoardState, LocalView)
     for UpdateFunction in UpdateFunctions:
@@ -139,13 +135,15 @@ class GUI:
         BoardIOWidgetBase.GUI = self
         ModeC.GUI = self
         self.Library = CLibrary()
-        self.OpenBoards = []
-        self.OpenDisplays = []
+        self.LoadedBoards = []
+        self.LoadedDisplays = []
         self.CurrentBoard = None
         self.CurrentDisplay = None
+        self.DisplayedPinsWindgets = {}
 
         self.LoadGUI()
 
+        self.ResetBoardGUIVariables()
         if len(Args) > 1:
             self.Open(New=False, Filename=Args[1])
         else:
@@ -167,6 +165,7 @@ class GUI:
         self.Modes.Default(Message = f'Entry return by {Entry}')
 
     @Trigger
+    @Update(BoardState)
     def BoardIOWidgetLevelModificationCallback(self, Entry):
         self.CH.Input = Entry.Push(self.CH.Input)
 
@@ -182,87 +181,134 @@ class GUI:
     def OnComponentButtonClick(self, ComponentClass):
         self.StartComponent(ComponentClass)
 
+    @Trigger
+    def MenuSelectBoardName(self, Board):
+        if Board is None:
+            self.Open(New=True)
+        else:
+            if Board == self.CurrentBoard:
+                return
+            print(f"Selected {Board.Name}")
+            self.SelectBoard(Board)
+
     # Update functions. No trigger should be within here, apart from simulation run
+
+    def ResetBoardGUIVariables(self):
+        self.Rotation = 0
+        self.CanHighlight = [None]
+        self.Highlighted = None
+        self.TmpComponents = set()
 
     def ClearBoard(self):
         self.CH.LiveUpdate = False # Possibly useless
-        self.DisplayAx.cla()
+        self.CurrentDisplay.Ax.cla()
         self.PlotView()
         return True
 
     @Update(BoardsList)
     @Modes.Default
-    def SaveBoardData(self, SelectFilename = False):
+    def SaveBoard(self, SelectFilename = False):
         if self.CurrentBoard.Filename is None or SelectFilename:
             Filename = Tk.filedialog.asksaveasfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')
+            Force = True
         else:
-            Filename = ''
+            Filename = self.CurrentBoard.Filename
         if Filename:
-            self.CurrentBoard.Save(Filename)
+            Success = self.CurrentBoard.Save(Filename, Force = Force)
+            if Success:
+                self.MainWindow.title(Params.GUI.Name + f" ({self.CurrentBoard.Name})")
+            return Success
         else:
             LogWarning("Data unsaved")
+
+    @Modes.Default
+    def ExportBoardAsComponent(self):
+
 
     def Open(self, New=False, Filename=''):
         if New:
             Log("Starting new board")
-            if not self.FreeDisplpay: 
-                self.NewDisplay()
-            self.OpenBoards.append(BoardC(Filename = None, Display = self.CurrentDisplay))
+            self.LoadedBoards.append(BoardC(None, self.NewDisplay()))
         else:
             if not Filename:
                 Filename = Tk.filedialog.askopenfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')
             if Filename:
-                for Board in self.OpenBoards:
+                for Board in self.LoadedBoards:
                     if Board.Filename == Filename:
                         Log("Board already opened")
                         self.SelectBoard(Board)
                         return
-                if not self.FreeDisplpay:
-                    self.NewDisplay()
-                self.OpenBoards.append(BoardC(Filename, self.CurrentDisplay))
+                LoadingDisplay = self.NewDisplay()
+                self.Library.ComponentBase.Display = LoadingDisplay.Ax
+                self.LoadedBoards.append(BoardC(Filename, LoadingDisplay))
             else:
                 return
-        self.SelectBoard(self.OpenBoards[-1])
+        self.SelectBoard(self.LoadedBoards[-1])
 
-    def CloseBoard(self, Board):
-        pass
+    @Update(BoardsList)
+    def CloseBoard(self, Board = None):
+        if Board is None:
+            Board = self.CurrentBoard
+        if not Board.Saved:
+            ans = messagebox.askyesnocancel("Unsaved changes", f"Save changes to board {Board.Name} before closing?")
+            if ans is None:
+                return
+            if ans:
+                if not self.SaveBoard():
+                    return
+        Index = self.LoadedBoards.index(Board)
+        self.LoadedBoards.remove(Board)
+        if not Board.Display is None:
+            self.LoadedDisplays.remove(Board.Display)
+        if len(self.LoadedBoards) == 0:
+            self.MenuSelectBoardName(self.NewBoardStr)
+        else:
+            self.SelectBoard(self.LoadedBoards[max(0, Index-1)])
+
     @Update(BoardsList, GUILayout, BoardState)
+    @Modes.Default
     def SelectBoard(self, Board):
-        self.CurrentBoard = Board
-        self.CurrentDisplay = Board.Display
-        self.CH = self.CurrentBoard.ComponentsHandler
+        if not self.CurrentBoard is None:
+            self.ClearTmpComponents()
 
-        self.Rotation = 0
-        self.CanHighlight = [None]
-        self.Highlighted = None
-        self.TmpComponents = set()
-        self.SetupPins = {}
+        self.CurrentBoard = Board
+        self.SelectDisplay(Board.Display)
+
+        self.ResetBoardGUIVariables()
 
         self.MainWindow.title(Params.GUI.Name + f" ({self.CurrentBoard.Name})")
 
-        self.DisplayCanvas.get_tk_widget().grid(row = 0, column = 0)
-        self.MainWidget = self.DisplayCanvas.get_tk_widget()
-        self.Library.ComponentBase.Display = self.DisplayAx
-        self.DisplayCanvas.mpl_connect('button_press_event', lambda e:self.OnClickMove(np.array([e.xdata, e.ydata])))
-
-        self.SetView()
-
     @property
-    def FreeDisplpay(self):
-        return self.CurrentDisplay.Board is None
+    def Cursor(self):
+        return self.CurrentDisplay.Cursor
+    @Cursor.setter
+    def Cursor(self, value):
+        self.CurrentDisplay.Cursor = value
+    @property
+    def CH(self):
+        return self.CurrentBoard.ComponentsHandler
 
     @Update(LocalView)
-    def NewDisplay(self, BoardDisplay = None):
-        if BoardDisplay is None:
-            self.CurrentDisplay = BoardDisplayC()
-            self.OpenDisplays.append(self.CurrentDisplay)
-        else:
-            self.CurrentDisplay = BoardDisplay
+    def SelectDisplay(self, Display):
+        if not self.CurrentDisplay is None:
+            self.CurrentDisplay.Widget.grid_forget()
+        self.CurrentDisplay = Display
+        self.CurrentDisplay.Widget.grid(row = 0, column = 0)
 
         self.UpdateCursorStyle() # Display is loaded with a default black color to reduce Tools interactions with modes. Need to update it right away
-        self.DisplayCanvas.get_tk_widget().grid(row = 0, column = 0)
-        self.MainWidget = self.DisplayCanvas.get_tk_widget()
-        self.Library.ComponentBase.Display = self.DisplayAx
+        self.Library.ComponentBase.Display = self.CurrentDisplay.Ax
+
+        self.CurrentDisplay.Canvas.mpl_connect('button_press_event', lambda e:self.OnClickMove(np.array([e.xdata, e.ydata])))
+        self.MainWidget = self.CurrentDisplay.Widget
+        self.MainWidget.bind('<FocusOut>', lambda e:self.CheckFocusOut())
+        self.MainWidget.focus_set()
+
+    def NewDisplay(self):
+        NewDisplay = BoardDisplayC()
+        self.LoadedDisplays.append(NewDisplay)
+        NewDisplay.SetView()
+
+        return NewDisplay
 
     @Modes.Build
     @Update(LocalView)
@@ -282,76 +328,36 @@ class GUI:
 
     def OnKeyMove(self, Motion, Mod):
         Move = Motion*10**(int(Mod == 1))
-        self.Cursor += Move
+        self.CurrentDisplay.Cursor += Move
         self.OnMove()
 
+    @Update(LocalView)
     def OnMove(self):
-        self.UpdateCursorPlot()
-        Displacement = np.maximum(0, self.Cursor + Params.GUI.View.DefaultMargin - (self.LowerLeftViewCorner + self.Size))
-        if Displacement.any():
-            self.LowerLeftViewCorner += Displacement
-            self.SetBoardLimits()
-        else:
-            Displacement = np.maximum(0, self.LowerLeftViewCorner - (self.Cursor - Params.GUI.View.DefaultMargin))
-            if Displacement.any():
-                self.LowerLeftViewCorner -= Displacement
-                self.SetBoardLimits()
+        self.CurrentDisplay.OnMove()
         if self.Modes.Build:
             for Component in self.TmpComponents:
                 Component.Drag(self.Cursor)
         if self.Modes.Default:
             self.CheckConnexionToggle()
+        self.MoveHighlight()
 
-    @property
-    def Size(self):
-        return np.array([1, Params.GUI.View.FigRatio]) * self.xSize
-    @property
-    def ySize(self):
-        return Params.GUI.View.FigRatio * self.xSize
+    @Update(LocalView)
+    def SetView(self):
+        self.CurrentDisplay.SetView()
+        self.MoveHighlight()
 
-    def SetView(self, View = None):
-        if View is None:
-            if (self.CH.ComponentsLimits == 0).all():
-                self.xSize = Params.GUI.View.Zooms[0]
-            else:
-                self.xSize = max(Params.GUI.View.Zooms[0], (self.CH.ComponentsLimits[:,1] - self.CH.ComponentsLimits[:,0]).max())
-            self.Cursor = self.CH.ComponentsLimits.mean(axis = 1).astype(int)
-            self.LowerLeftViewCorner = self.Cursor - (self.Size / 2)
-        else:
-            raise NotImplementedError
-        self.SetBoardLimits()
-        
-        self.UpdateCursorPlot()
-
+    @Update(LocalView)
     def NextZoom(self):
         self.DisplayToolbar.children['!checkbutton2'].deselect()
-        if self.xSize not in Params.GUI.View.Zooms:
-            self.Size = Params.GUI.View.Zooms[0]
-        else:
-            self.xSize = Params.GUI.View.Zooms[(Params.GUI.View.Zooms.index(self.xSize)+1)%len(Params.GUI.View.Zooms)]
-        self.LowerLeftViewCorner = self.Cursor - (self.Size / 2)
-        self.SetBoardLimits()
+        self.CurrentDisplay.NextZoom()
 
     @Update(LocalView) 
     def UpdateCursorPlot(self):
-        self.MoveHighlight()
-        self.Plots['Cursor'].set_data(*self.Cursor)
-        if Params.GUI.View.CursorLinesWidth:
-            self.Plots['HCursor'].set_data([-Params.Board.Max, Params.Board.Max], [self.Cursor[1], self.Cursor[1]])
-            self.Plots['VCursor'].set_data([self.Cursor[0], self.Cursor[0]], [-Params.Board.Max, Params.Board.Max])
+        self.CurrentDisplay.UpdateCursorPlot()
 
     @Update(LocalView)
     def UpdateCursorStyle(self):
-        Color = self.Modes.Current.Color
-        self.Plots['Cursor'].set_color(Color)
-        if Params.GUI.View.CursorLinesWidth:
-            self.Plots['HCursor'].set_color(Color)
-            self.Plots['VCursor'].set_color(Color)
-
-    @Update(LocalView)
-    def SetBoardLimits(self):
-        self.DisplayAx.set_xlim(self.LowerLeftViewCorner[0],self.LowerLeftViewCorner[0]+self.xSize)
-        self.DisplayAx.set_ylim(self.LowerLeftViewCorner[1],self.LowerLeftViewCorner[1]+self.ySize)
+        self.CurrentDisplay.UpdateCursorStyle(self.Modes.Current.Color)
 
     @Update(LocalView)
     def SetWireBuildMode(self, mode):
@@ -371,7 +377,6 @@ class GUI:
                 raise Exception(f"{len(self.TmpComponents)} component(s) currently in memory for BuildMode")
             Component = self.TmpComponents.pop()
             if self.CH.Register(Component):
-                print(self.CH.Input)
                 self.ConfirmComponentRegister(Component, Joins)
             else:
                 self.TmpComponents.add(Component)
@@ -470,6 +475,17 @@ class GUI:
         else:
             self.MainFrame.Board.Controls.ToggleConnexionButton.configure(image = self._Icons['DotImage'])
 
+    def ComputeTruthTable(self):
+        NBits = self.CH.NBitsInput
+        if NBits == 0:
+            Log("Nothing to compute")
+            return
+        if NBits > Params.GUI.TruthTable.WarningLimitNBits:
+            ans = messagebox.askokcancel("Large input", f"Computing truth table for {NBits} bits ({2**NBits} possibilities) ?")
+            if not ans:
+                return
+        self.CurrentBoard.ComputeTruthTable()
+
 # Loading methods
 
     def LoadGUI(self):
@@ -491,15 +507,12 @@ class GUI:
         self.LoadRightPanel()
         self.LoadLibraryGUI()
 
-        self.MainWidget.focus_set()
-        self.MainWidget.bind('<FocusOut>', lambda e:self.CheckFocusOut())
-
     def CheckFocusOut(self):
         try:
             Focus = self.MainWidget.focus_get()
         except KeyError:
             return
-        if not Focus is None and not self.Modes.Text:
+        if (not Focus is None) and (type(Focus) in (Tk.Entry, ConsoleText)) and (not self.Modes.Text):
             self.Modes.Text(Message = 'FocusOut')
 
     def LoadKeys(self):
@@ -509,7 +522,6 @@ class GUI:
 
         self.AddControlKey(Controls.Connect, lambda key, mod: self.ToggleConnexion())
         self.AddControlKey(Controls.Close,   lambda key, mod: self.Close(0))
-#        self.AddControlKey(Controls.Delete,  lambda key, mod: self.Delete())
         self.AddControlKey(Controls.Move,    lambda key, mod: self.Move())
         self.AddControlKey(Controls.Restart, lambda key, mod: self.Close(1))
         self.AddControlKey(Controls.Reload,  lambda key, mod: self.Close(2))
@@ -526,12 +538,11 @@ class GUI:
 
         CTRL = 4
         SHIFT = 1
-        self.AddControlKey('s', lambda key, mod:self.SaveBoardData(), Mod = CTRL)
-        self.AddControlKey('s', lambda key, mod:self.SaveBoardData(SelectFilename=True), Mod = CTRL+SHIFT)
+        self.AddControlKey('s', lambda key, mod:self.SaveBoard(), Mod = CTRL)
+        self.AddControlKey('s', lambda key, mod:self.SaveBoard(SelectFilename=True), Mod = CTRL+SHIFT)
         self.AddControlKey('o', lambda key, mod:self.Open(New=False), Mod = CTRL)
         self.AddControlKey('n', lambda key, mod:self.Open(New=True), Mod = CTRL)
-
-        #self.MainWindow.bind('<Key>', lambda e: print(e.__dict__)) # Override to check key value
+        self.AddControlKey('w', lambda key, mod:self.CloseBoard(), Mod = CTRL)
 
     def TextFilter(self, Callback, Symbol, Modifier):
         #if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5', 'f6'): # Hardcoded so far, should be taken from Params as well
@@ -555,9 +566,10 @@ class GUI:
 
         AddCommand(FMenu, 'New', self.Open, New = True)
         AddCommand(FMenu, 'Open', self.Open, Ask = False)
-        AddCommand(FMenu, 'Save', self.SaveBoardData)
-        AddCommand(FMenu, 'Save as...', self.SaveBoardData, SelectFilename = True)
+        AddCommand(FMenu, 'Save', self.SaveBoard)
+        AddCommand(FMenu, 'Save as...', self.SaveBoard, SelectFilename = True)
         FMenu.add_separator()
+        AddCommand(FMenu, 'Export as component', self.ExportBoardAsComponent)
         FMenu.add_command(label="Exit", command=self.Close)
         MainMenu.add_cascade(label="File", menu=FMenu)
 
@@ -589,6 +601,7 @@ class GUI:
 
     def LoadTopPanel(self):
         self.LoadUpdateFunctions()
+        self.LoadTruthTableWidgets()
 
     def LoadUpdateFunctions(self):
         UpdateFrame = self.MainFrame.Top_Panel.AddFrame("UpdateFunctions", Side = Tk.TOP, NoName = True)
@@ -596,6 +609,10 @@ class GUI:
         UpdateFrame.AddWidget(Tk.Button, "Cursor_info", text = "Cursor info", command = self.CursorInfo, width = 20)
         UpdateFrame.AddWidget(Tk.Button, "Board_state", text = "Board state", command = self.BoardState, width = 20)
         UpdateFrame.AddWidget(Tk.Button, "Local_view", text = "Local view", command = self.LocalView, width = 20)
+
+    def LoadTruthTableWidgets(self):
+        TTFrame = self.MainFrame.Top_Panel.AddFrame("TruthTable", Side = Tk.TOP, NoName = True)
+        TTFrame.AddWidget(Tk.Button, "Compute", text = "Compute truth table", command = self.ComputeTruthTable, width = 20)
 
     def LoadCenterPanel(self):
         self.MainFrame.Board.AddFrame("Controls", Side = Tk.LEFT)
@@ -606,9 +623,8 @@ class GUI:
 
         self.LoadControls()
 
-        for Item in BoardDisplayC.GUIItems:
-            setattr(self.__class__, Item, property(lambda self, Item=Item:getattr(self.CurrentDisplay, Item), lambda self, value, Item=Item:setattr(self.CurrentDisplay, Item, value)))
         self.NewDisplay()
+        self.SelectDisplay(self.LoadedDisplays[-1])
 
         self.LoadDisplayToolbar()
 
@@ -631,15 +647,22 @@ class GUI:
         self.MainFrame.Board.Controls.AddWidget(Tk.Button, "RotateRight", image=self._Icons['RRImage'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.Rotate, 1))
 
         BoardSelectionFrame = self.MainFrame.Board.Controls.AddFrame("BoardSelectionFrame", Side = Tk.LEFT)
-        self.BoardVar = Tk.StringVar(BoardSelectionFrame.frame, "New board")
-        self.BoardVar.trace_add("write", lambda *args, self = self, **kwargs: self.SelectBoard(self.NameToBoardDict[self.BoardVar.get()]))
-        self.BoardsMenu = BoardSelectionFrame.AddWidget(Tk.OptionMenu, variable = self.BoardVar, value = self.BoardVar.get())
+        self.BoardVar = Tk.StringVar(BoardSelectionFrame.frame, self.NewBoardStr)
+        #self.BoardVar.trace_add("write", lambda *args, self = self, **kwargs: self.MenuSelectBoardName(self.BoardVar.get()))
+        self.BoardsMenu = BoardSelectionFrame.AddWidget(Tk.OptionMenu, variable = self.BoardVar, value = self.BoardVar.get(), command = self.MenuSelectBoardName)
+        self.BoardsMenu.configure(width = Params.GUI.CenterPanel.BoardMenuWidth)
+#        self.BoardsMenu.configure(justify = 'left')
+
+        self._Icons['Cross'] = Tk.PhotoImage(file="./images/Cross.png").subsample(40)
+        BoardSelectionFrame.AddWidget(Tk.Button, "CloseBoard", image = self._Icons['Cross'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.CloseBoard))
+        self._Icons['Component'] = Tk.PhotoImage(file="./images/Component.png")
+        BoardSelectionFrame.AddWidget(Tk.Button, "ToComponent", image = self._Icons['Component'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.ExportBoardAsComponent))
 
     def LoadDisplayToolbar(self):
         self.MainFrame.Board.DisplayToolbar.AddFrame("Buttons", Side = Tk.TOP, Border = False)
         self.MainFrame.Board.DisplayToolbar.AddFrame("Labels", Border = False)
         self.MainFrame.Board.DisplayToolbar.Buttons.RemoveDefaultName()
-        self.DisplayToolbar = NavigationToolbar2Tk(self.DisplayCanvas, self.MainFrame.Board.DisplayToolbar.Buttons.frame)
+        self.DisplayToolbar = NavigationToolbar2Tk(self.CurrentDisplay.Canvas, self.MainFrame.Board.DisplayToolbar.Buttons.frame)
         NewCommands = {'!button':lambda:self.OnStaticGUIButton(self.SetView), # Remap Home button
                         '!checkbutton2':lambda:self.OnStaticGUIButton(self.NextZoom) # Remap zoom button
         }
@@ -663,7 +686,7 @@ class GUI:
         self.BoardInputEntry = SEntry(self.MainFrame.Right_Panel.Board_Inputs, "Board Input", Bits = tuple(), TotalWidth = Params.GUI.RightPanel.Width)
         self.MainFrame.Right_Panel.AddFrame("Board_Outputs", row = 1, column = 0, columnspan = 2, Border = True, NoName = True)
         self.BoardOutputLabel = SLabel(self.MainFrame.Right_Panel.Board_Outputs, "Board Output", Bits = tuple(), TotalWidth = Params.GUI.RightPanel.Width)
-
+        
         self.BoardInputWidgets =  {self.BoardInputEntry}
         self.BoardOutputWidgets = {self.BoardOutputLabel}
 

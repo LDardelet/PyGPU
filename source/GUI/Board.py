@@ -1,38 +1,74 @@
-from Circuit import ComponentsHandlerC
+import numpy as np
+
+from Circuit import ComponentsHandlerC, TruthTableC
 from Storage import FileHandlerC
 
+from Console import Log, LogWarning, LogSuccess
+
 class BoardC:
-    NewFilename = "Untitled"
-    def __init__(self, Filename = None, ParentBoard = None, Display = None):
+    Untitled = "Untitled"
+    _SavedItems = (('ComponentsHandler', ComponentsHandlerC),
+                  ('TruthTable', TruthTableC))
+    def __init__(self, Filename = None, Display = None, ParentBoard = None):
         self.FileHandler = FileHandlerC()
         self.Filename = Filename
 
         self.ParentBoard = ParentBoard
-        self.OpenBoards = []
+        self.LoadedBoards = []
 
         self.Display = Display
         self.Display.Board = self
-
         if self.Filed:
             self.FileHandler.Load(self.Filename)
-            self.ComponentsHandler = self.FileHandler['handler']
+            for Item, _ in self._SavedItems:
+                setattr(self, Item, self.FileHandler[Item])
         else:
+            for Item, DefaultClass in self._SavedItems:
+                setattr(self, Item, DefaultClass())
             self.ComponentsHandler = ComponentsHandlerC()
 
-    def Save(self, Filename):
+        self.Display.SetView()
+
+    def Save(self, Filename, Force = False):
+        if self.Saved and not Force:
+            return True
         if not self.ParentBoard is None:
-            raise Exception("Cannot save a board opened as componente")
+            LogWarning("Cannot save a board opened as a component")
+            return False
         self.Filename = Filename
-        self.FileHandler.Save(Filename, handler = self.ComponentsHandlerC)
+        self.FileHandler.Save(Filename, **{Item: getattr(self, Item) for Item, _ in self._SavedItems})
+        return True
+
+    def ComputeTruthTable(self):
+        StoredInput = self.ComponentsHandler.Input
+
+        N = 2**self.ComponentsHandler.NBitsInput
+        Data = np.zeros(N, dtype = int)
+        self.ComponentsHandler.Ready = False
+        for Input in range(N):
+            self.ComponentsHandler.Input = Input
+            self.ComponentsHandler.SolveRequests()
+            Data[Input] = self.ComponentsHandler.Output
+        self.TruthTable.Data = Data
+        Log("Done!")
+        self.ComponentsHandler.Input = StoredInput
+        self.ComponentsHandler.SolveRequests()
+        self.ComponentsHandler.Ready = True
+
+
 
     @property
     def Name(self):
         if self.Filed:
             BoardName = self.Filename.split('/')[-1]
         else:
-            BoardName = self.NewFilename
+            BoardName = self.Untitled
         return BoardName
 
     @property
     def Filed(self):
         return not self.Filename is None
+
+    @property
+    def Saved(self):
+        return self.ComponentsHandler._Saved

@@ -1,4 +1,5 @@
 import tkinter as Tk
+import numpy as np
 
 import matplotlib
 from functools import cached_property
@@ -9,7 +10,6 @@ ForceReload = True
 
 def Void(*args, **kwargs):
     pass
-    #print(args[0])
 
 class ModeC:
     GUI = None
@@ -24,11 +24,11 @@ class ModeC:
             ModeC.Current = self
     def __call__(self, func = None, Message = '', Advertise = False): # Both a call and a wrapper
         if not func is None:
-            def Wrap(*args, **kwargs):
+            def ModeWrap(*args, **kwargs):
                 if not bool(self) or ForceReload: # Wrapper only changes if necessary
                     self(Message = f'wrap of {func.__name__}')
                 func(*args, **kwargs)
-            return Wrap
+            return ModeWrap
         
         if Advertise:
             Log(f"Mode {self.Name}" + bool(Message)*f' ({Message})')
@@ -67,7 +67,6 @@ class DefaultModeC(ModeC):
 class TextModeC(ModeC):
     ID = 1
     def SetProps(self, From):
-        #if self.MainWindow.focus_get() != self.MainFrame.Console.ConsoleInstance.text:
         if self.MainWindow.focus_get() == self.MainWidget:
             self.MainFrame.Console.ConsoleInstance.text.see(Tk.END)
             self.MainFrame.Console.ConsoleInstance.text.focus_set()
@@ -77,9 +76,7 @@ class BuildModeC(ModeC):
     ID = 2
     def SetProps(self, From):
         self.ClearTmpComponents()
-        self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.HiddenAlpha)
     def LeaveProps(self):
-        self.Plots['Cursor'].set_alpha(Params.GUI.Cursor.DefaultAlpha)
         self.SetLibraryButtonColor(None)
     def ReloadProps(self):
         self.ClearTmpComponents()
@@ -88,7 +85,6 @@ class DeleteModeC(ModeC):
     def SetProps(self, From):
         if From == BuildModeC:
             self.ClearTmpComponents()
-        print(From)
         self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.DISABLED)
         self.DeleteSelect()
     def ReloadProps(self):
@@ -380,8 +376,10 @@ class SPinEntry(BoardIOWidgetBase):
         if self.Type == PinDict.Output:
             self.SetButton.configure(state = Tk.DISABLED)
             self.InvalidColor = Colors.GUI.Widget.wrongLabel
+            self.CName = "Label"
         else:
             self.InvalidColor = Colors.GUI.Widget.wrongEntry
+            self.CName = "Entry"
 
         self.Bits = (Pin.TypeIndex,)
 
@@ -408,49 +406,45 @@ class SPinEntry(BoardIOWidgetBase):
     def UpdateRepresentation(self):
         if not self.Valid:
             Color = self.InvalidColor
-            self.SetButton.configure(state = Tk.DISABLED)
+            if self.Type == PinDict.Input:
+                self.SetButton.configure(state = Tk.DISABLED)
         else:
-            self.SetButton.configure(state = Tk.NORMAL)
+            if self.Type == PinDict.Input:
+                self.SetButton.configure(state = Tk.NORMAL)
             Color = Colors.Component.Levels[self.Level]
         self.SetButton.configure(bg = Color)
         self.SetButton.configure(activebackground = Color)
 
     def __repr__(self):
-        return f"{self.Pin.Label} PinEntry"
+        return f"{str(self.Pin)} {self.CName}"
     
 class BoardDisplayC:
     frame = None
     ClickCallback = None
 
-    GUIItems = ('DisplayFigure', 
-                'DisplayAx',
-                'DisplayCanvas',
-                'Plots',
-                'xSize',
-                'Cursor',
-                'LowerLeftViewCorner')
     def __init__(self):
-        self.DisplayFigure = matplotlib.figure.Figure(figsize=Params.GUI.View.FigSize, dpi=Params.GUI.View.DPI)
-        self.DisplayFigure.subplots_adjust(0., 0., 1., 1.)
-        self.DisplayAx = self.DisplayFigure.add_subplot(111)
-        self.DisplayAx.set_aspect("equal")
-        self.DisplayAx.tick_params('both', left = False, bottom = False, labelleft = False, labelbottom = False)
-        self.DisplayAx.set_facecolor((0., 0., 0.))
+        self.Figure = matplotlib.figure.Figure(figsize=Params.GUI.View.FigSize, dpi=Params.GUI.View.DPI)
+        self.Figure.subplots_adjust(0., 0., 1., 1.)
+        self.Ax = self.Figure.add_subplot(111)
+        self.Ax.set_aspect("equal")
+        self.Ax.tick_params('both', left = False, bottom = False, labelleft = False, labelbottom = False)
+        self.Ax.set_facecolor((0., 0., 0.))
 
-        self.DisplayCanvas = matplotlib.backends.backend_tkagg.FigureCanvasTkAgg(self.DisplayFigure, self.frame)
+        self.Canvas = matplotlib.backends.backend_tkagg.FigureCanvasTkAgg(self.Figure, self.frame)
+        self.Widget = self.Canvas.get_tk_widget()
 
         self.Plots = {}
         Color = 'k'
-        self.Plots['Cursor'] = self.DisplayAx.plot(0,0, marker = 'o', color = Color)[0]
+        self.Plots['Cursor'] = self.Ax.plot(0,0, marker = 'o', color = Color)[0]
         if Params.GUI.View.CursorLinesWidth:
-            self.Plots['HCursor'] = self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max], [0,0], linewidth = Params.GUI.View.CursorLinesWidth, color = Color, alpha = 0.3)[0]
-            self.Plots['VCursor'] = self.DisplayAx.plot([0,0], [-Params.Board.Max, Params.Board.Max], linewidth = Params.GUI.View.CursorLinesWidth, color = Color, alpha = 0.3)[0]
+            self.Plots['HCursor'] = self.Ax.plot([-Params.Board.Max, Params.Board.Max], [0,0], linewidth = Params.GUI.View.CursorLinesWidth, color = Color, alpha = 0.3)[0]
+            self.Plots['VCursor'] = self.Ax.plot([0,0], [-Params.Board.Max, Params.Board.Max], linewidth = Params.GUI.View.CursorLinesWidth, color = Color, alpha = 0.3)[0]
         RLE = Params.GUI.View.RefLineEvery
         if RLE:
             NLines = Params.Board.Size // RLE
-            self.Plots['HLines']=[self.DisplayAx.plot([-Params.Board.Max, Params.Board.Max],
+            self.Plots['HLines']=[self.Ax.plot([-Params.Board.Max, Params.Board.Max],
                                  [nLine*RLE, nLine*RLE], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
-            self.Plots['VLines']=[self.DisplayAx.plot([nLine*RLE, nLine*RLE],
+            self.Plots['VLines']=[self.Ax.plot([nLine*RLE, nLine*RLE],
                                  [-Params.Board.Max, Params.Board.Max], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
 
         self.Cursor = None
@@ -458,3 +452,57 @@ class BoardDisplayC:
         self.LowerLeftViewCorner = None
 
         self.Board = None
+
+    def OnMove(self):
+        self.UpdateCursorPlot()
+        Displacement = np.maximum(0, self.Cursor + Params.GUI.View.DefaultMargin - (self.LowerLeftViewCorner + self.Size))
+        if Displacement.any():
+            self.LowerLeftViewCorner += Displacement
+            self.SetBoardLimits()
+        else:
+            Displacement = np.maximum(0, self.LowerLeftViewCorner - (self.Cursor - Params.GUI.View.DefaultMargin))
+            if Displacement.any():
+                self.LowerLeftViewCorner -= Displacement
+                self.SetBoardLimits()
+
+    def SetView(self):
+        if self.Board is None or (self.Board.ComponentsHandler.ComponentsLimits == 0).all():
+            self.xSize = Params.GUI.View.Zooms[0]
+            self.Cursor = np.zeros(2, dtype = int)
+        else:
+            self.xSize = max(Params.GUI.View.Zooms[0], (self.Board.ComponentsHandler.ComponentsLimits[:,1] - self.Board.ComponentsHandler.ComponentsLimits[:,0]).max())
+            self.Cursor = self.Board.ComponentsHandler.ComponentsLimits.mean(axis = 1).astype(int)
+
+        self.LowerLeftViewCorner = self.Cursor - (self.Size / 2)
+        self.SetBoardLimits()
+        self.UpdateCursorPlot()
+
+    def SetBoardLimits(self):
+        self.Ax.set_xlim(self.LowerLeftViewCorner[0],self.LowerLeftViewCorner[0]+self.xSize)
+        self.Ax.set_ylim(self.LowerLeftViewCorner[1],self.LowerLeftViewCorner[1]+self.ySize)
+
+    def NextZoom(self):
+        if self.xSize not in Params.GUI.View.Zooms:
+            self.xSize = Params.GUI.View.Zooms[0]
+        else:
+            self.xSize = Params.GUI.View.Zooms[(Params.GUI.View.Zooms.index(self.xSize)+1)%len(Params.GUI.View.Zooms)]
+        self.LowerLeftViewCorner = self.Cursor - (self.Size / 2)
+        self.SetBoardLimits()
+
+    def UpdateCursorPlot(self):
+        self.Plots['Cursor'].set_data(*self.Cursor)
+        if Params.GUI.View.CursorLinesWidth:
+            self.Plots['HCursor'].set_data([-Params.Board.Max, Params.Board.Max], [self.Cursor[1], self.Cursor[1]])
+            self.Plots['VCursor'].set_data([self.Cursor[0], self.Cursor[0]], [-Params.Board.Max, Params.Board.Max])
+    def UpdateCursorStyle(self, Color):
+        self.Plots['Cursor'].set_color(Color)
+        if Params.GUI.View.CursorLinesWidth:
+            self.Plots['HCursor'].set_color(Color)
+            self.Plots['VCursor'].set_color(Color)
+
+    @property
+    def Size(self):
+        return np.array([1, Params.GUI.View.FigRatio]) * self.xSize
+    @property
+    def ySize(self):
+        return Params.GUI.View.FigRatio * self.xSize

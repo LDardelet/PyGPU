@@ -80,13 +80,15 @@ class Params:
             DefaultMargin = 1
             RefLineEvery = 20
             CursorLinesWidth = 1
+        class CenterPanel:
+            BoardMenuWidth = 40
         class RightPanel:
             Width = 60
             PinNameEntryWidth = 5
         class Cursor:
             Marker = 'o'
-            DefaultAlpha = 1.
-            HiddenAlpha = 0.4
+            DefaultAlpha = 1. # Unused right now
+            HiddenAlpha = 0.4 # Unused right now
         class PlotsWidths:
             HighlightFactor = 2.5
             Wire = 1
@@ -128,7 +130,6 @@ class Params:
             }
             Close = 'f4'
             Connect = 'c'
-#            Delete = 'd'
             Move = 'm'
             Restart = 'f5'
             Reload = 'f6'
@@ -136,11 +137,12 @@ class Params:
             Select = 's'
             Set = 'space'
             Switch = 't'
-            # Modifiers
 
         class Console:
             Height = 7
             Width = 120
+        class TruthTable:
+            WarningLimitNBits = 10
         class Behaviour:
             AutoContinueComponent = True
             StopWireOnJoin = True

@@ -5,22 +5,30 @@ import re
 
 from Console import Log, LogSuccess, LogWarning
 
+class BaseLibraryC:
+    def __init__(self):
+        self.Elements = {}
+    def Advertise(self, Class):
+        self.Elements[Class.LibRef] = Class
+    def __getitem__(self, key):
+        return self.Elements[key]
+
+BaseLibrary = BaseLibraryC()
+
 class FileHandlerC:
     def __init__(self):
         self.UnpackedData = None
     
     def Load(self, Filename): # Only loads data from file to memory
-        with open(Filename, 'rb') as f:
-            RawData = pickle.load(f)
-            self.UnpackedData = EntryPoint().StartUnpack(RawData)
+        Success, self.UnpackedData = EntryPoint().Load(Filename)
+        if Success:
+            LogSuccess("Data loaded")
 
     def Save(self, Filename, **kwargs):
         if Filename is None:
             raise FileNotFoundError("Must specify a filename to save data")
 
-        PackedData = EntryPoint(**kwargs).StartPack()
-        with open(Filename, 'wb') as f:
-            f.write(pickle.dumps(PackedData))
+        if EntryPoint(**kwargs).Save(Filename):
             LogSuccess("Data saved")
 
     def __getitem__(self, key):
@@ -46,7 +54,7 @@ class Meta(type):
         return self
 
 class StorageItem(metaclass = Meta):
-    Library = None
+    GeneralLibrary = None
     LibRef = None
     _StoreTmpAttributes = False
     def __init__(self, *args, **kwargs):
@@ -54,10 +62,11 @@ class StorageItem(metaclass = Meta):
         if hasattr(self, '_SA'): # Stops any infinite loop for all non-overloaded __init__ inherited classes
             return
         self._SA = {'_SA', 'LibRef', '_StoreTmpAttributes'}
-        self._Modified = False
+        self._Saved = True
         if self._StoreTmpAttributes:
             self.StoredAttribute('_TA', {})
         self.__init__(*args, **kwargs) # Start method if left to be called when necessary in the __init__
+
     def StoredAttribute(self, attr, defaultValue):
         self._SA.add(attr)
         if hasattr(self, attr) and not hasattr(self.__class__, attr):
@@ -93,7 +102,6 @@ class StorageItem(metaclass = Meta):
                 for Key, DefaultValue in self._TA.items():
                     Log(f"Saving default attribute {Key}", LogTab)
                     D[Key] = self.Pack(DefaultValue, IDsToDicts, Packed, False, LogTab+IterableTab) # Class is reinstanciated with the default value
-            self._Modified = False
             return D
         if isinstance(Value, StorageItem):
             if Value in Packed:
@@ -126,7 +134,7 @@ class StorageItem(metaclass = Meta):
         if NewItem:
             ID = Type
             Unpacked[ID] = self
-            self._Modified = False
+            self._Saved = True
             for Key, Data in Value.items():
                 setattr(self, self.Unpack(*Key, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key), self.Unpack(*Data, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key))
             Log(f"Unpacked new object {self.LibRef} with ID {ID}", LogTab)
@@ -142,7 +150,11 @@ class StorageItem(metaclass = Meta):
                 Value = IDsToDicts[ID]
                 LibRef = Value.pop((BUILDIN, 'LibRef'))[1]
                 Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking new object {ID} from LibRef {LibRef}", LogTab)
-                StorageItem.Library[LibRef](UnpackData = (ID, Value, IDsToDicts, Unpacked, True, LogTab))
+                if '.' in LibRef:
+                    StoredItemClass = StorageItem.GeneralLibrary[LibRef]
+                else:
+                    StoredItemClass = BaseLibrary[LibRef]
+                StoredItemClass(UnpackData = (ID, Value, IDsToDicts, Unpacked, True, LogTab))
                 #Unpacked[ID] = StorageItem.Library[Value.pop('LibRef')[1]](UnpackData = (ID, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab))
                 #Unpacked[ID].Unpack(DICT, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab)
                 return Unpacked[ID]
@@ -173,12 +185,21 @@ class EntryPoint(StorageItem):
         for Key, Value in kwargs.items():
             setattr(self, Key, Value)
             self._SA.add(Key)
-    def StartPack(self):
+    def Save(self, Filename):
         Objects = {}
         D = self.Pack(None, Objects, {None:0}, NewItem = True)
         D['_obj'] = Objects
-        return D
-    def StartUnpack(self, D):
+        Saved = False
+        with open(Filename, 'wb') as f:
+            f.write(pickle.dumps(D))
+            Saved = True
+            for Item in self._SA:
+                if isinstance(Item, StorageItem):
+                    Item.Saved = True
+        return Saved
+    def Load(self, Filename):
+        with open(Filename, 'rb') as f:
+            D = pickle.load(f)
         print("Start loading data")
         IDsToDicts = D.pop('_obj')
         Unpacked = {}
@@ -190,10 +211,12 @@ class EntryPoint(StorageItem):
                 Object.Start()
             except:
                 print("   Failed")
-        return StoredData
+                return False, None
+        print(StoredData.keys())
+        return True, StoredData
 
 def Modifies(func):
     def ModFunc(self, *args, **kwargs):
-        self._Modified = True
+        self._Saved = False
         return func(self, *args, **kwargs)
     return ModFunc

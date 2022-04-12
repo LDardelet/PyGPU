@@ -3,8 +3,8 @@ import numpy as np
 import Components as ComponentsModule
 from Values import Colors, Params, Levels, PinDict
 from Console import Log, LogSuccess, LogWarning, LogError
+from Storage import StorageItem, Modifies, BaseLibrary
 import DefaultLibrary
-from Storage import StorageItem, Modifies
 
 class ComponentsHandlerC(StorageItem):
     LibRef = "ComponentsHandler"
@@ -16,7 +16,7 @@ class ComponentsHandlerC(StorageItem):
         self.StoredAttribute('Pins', [])
         self.StoredAttribute('InputPins', tuple()) # Tuples for faster looping
         self.StoredAttribute('OutputPins', tuple())
-        self.StoredAttribute('CasingGroup', CasingGroupC())
+        self.StoredAttribute('CasingGroup', CasingGroupC(self))
         self.Start()
 
     def Start(self):
@@ -24,7 +24,6 @@ class ComponentsHandlerC(StorageItem):
         for Component in self.Components.values():
             self.RegisterMap(Component)
 
-        GroupC.Handler = self
         self.LiveUpdate = True
         self.Ready = True
         self.AwaitingUpdates = set()
@@ -62,6 +61,7 @@ class ComponentsHandlerC(StorageItem):
             try:
                 Component(list(Backtrace))
             except:
+                print("Requests solve error :")
                 print(Backtrace)
                 print(Component)
                 print(Component.Group)
@@ -113,7 +113,7 @@ class ComponentsHandlerC(StorageItem):
 
         self.RegisterMap(Component)
         if not isinstance(Component, ComponentsModule.CasedComponentC):
-            GroupC(Component)
+            GroupC(self, Component)
         else:
             self.CasingGroup.AddComponent(Component)
         self.LinkToOthers(Component)
@@ -264,6 +264,12 @@ class ComponentsHandlerC(StorageItem):
         for Pin in reversed(self.OutputPins):
             Valid = (Valid << 1) | (Pin.Valid)
         return Valid
+    @property
+    def NBitsInput(self):
+        return len(self.InputPins)
+    @property
+    def NBitsOutput(self):
+        return len(self.InputPins)
 
     def CheckWireMerges(self, W1):
         for x, y in W1.AdvertisedConnexions:
@@ -399,10 +405,16 @@ class ComponentsHandlerC(StorageItem):
         Limits[np.where(Limits > Params.Board.Max)] -= Params.Board.Size
         return Limits
 
+class TruthTableC(StorageItem):
+    LibRef = "TruthTable"
+    def __init__(self):
+        self.StoredAttribute('Data', np.zeros(0, dtype = int))
+        self.UpToDate = False
+
 class GroupC(StorageItem):
     LibRef = "Group"
-    Handler = None
-    def __init__(self, Component):
+    def __init__(self, Handler, Component):
+        self.StoredAttribute('Handler', Handler)
         self.StoredAttribute('InitialComponent', Component)
         self.StoredAttribute('Components', set())
         self.StoredAttribute('Connexions', set())
@@ -420,9 +432,8 @@ class GroupC(StorageItem):
         for Component in set(Group.Components):
             self.AddComponent(Component)
 
-    @classmethod
-    def CreateGroupFrom(cls, ComponentsSet):
-        NewGroup = cls(ComponentsSet.pop()) # We take any of the components of this new set as initial component
+    def CreateGroupFrom(self, ComponentsSet):
+        NewGroup = self.__class__(self.Handler, ComponentsSet.pop()) # We take any of the components of this new set as initial component
         for Component in ComponentsSet: # Level setting is taken care of in here
             NewGroup.AddComponent(Component)
         if not NewGroup.SetBy: # Incase SetBy existed for self group but was not encountered here, we must ensure that the default level here was implemented 
@@ -606,7 +617,8 @@ class CasingGroupC(StorageItem):
     Level = Levels.Undef
     Color = Colors.Component.Levels[Level]
     LibRef = "CGC"
-    def __init__(self):
+    def __init__(self, Handler):
+        self.StoredAttribute("Handler", Handler)
         self.StoredAttribute("Components", set())
     def __repr__(self):
         return "Casings"
@@ -668,28 +680,16 @@ class BookC:
                         'PinLabelRule':PinLabelRule,
                         'Symbol':Symbol,
                     })
+
 class CLibrary:
     ComponentBase = ComponentsModule.ComponentBase # Used to transmit Ax reference
     def __init__(self):
-        StorageItem.Library = self
+        StorageItem.GeneralLibrary = self
 
         self.Books = []
         self.Special = {}
         self.AddBook(BookC('Standard', DefaultLibrary.Definitions))
         self.Wire = ComponentsModule.WireC
-
-        self.AddSpecialStorageClass(ComponentsModule.ConnexionC)
-        self.AddSpecialStorageClass(ComponentsModule.CasingPinC)
-        self.AddSpecialStorageClass(ComponentsModule.InputPinC)
-        self.AddSpecialStorageClass(ComponentsModule.OutputPinC)
-        self.AddSpecialStorageClass(ComponentsModule.BoardPinC)
-        self.AddSpecialStorageClass(GroupC)
-        self.AddSpecialStorageClass(CasingGroupC)
-        self.AddSpecialStorageClass(ComponentsHandlerC)
-
-        self.AddSpecialStorageClass(ComponentsModule.StatesC)
-        for State in ComponentsModule.States.States:
-            self.AddSpecialStorageClass(State.__class__)
 
     def AddBook(self, Book):
         setattr(self, Book.Name, Book)
@@ -702,15 +702,14 @@ class CLibrary:
     def IsGroup(self, C):
         return isinstance(C, GroupC)
 
-    def AddSpecialStorageClass(self, Class):
-        if '.' in Class.LibRef:
-            LogWarning("Special storage class contains forbidden character '.'")
-        if Class.LibRef == None:
-            LogWarning(f"None LibRef for {Class}")
-        self.Special[Class.LibRef] = Class
     def __getitem__(self, LibRef):
         if '.' in LibRef:
             BName, CName = LibRef.split('.')
             return getattr(getattr(self, BName), CName)
         else:
             return self.Special[LibRef]
+
+BaseLibrary.Advertise(GroupC)
+BaseLibrary.Advertise(CasingGroupC)
+BaseLibrary.Advertise(ComponentsHandlerC)
+BaseLibrary.Advertise(TruthTableC)
