@@ -1,7 +1,7 @@
 import numpy as np
 
 import Components as ComponentsModule
-from Values import Colors, Params, Levels, PinDict
+from Values import Colors, Params, Levels, PinDict, BoardGroupsDict
 from Console import Log, LogSuccess, LogWarning, LogError
 from Storage import StorageItem, Modifies, BaseLibrary
 import DefaultLibrary
@@ -17,6 +17,7 @@ class ComponentsHandlerC(StorageItem):
         self.StoredAttribute('InputPins', tuple()) # Tuples for faster looping
         self.StoredAttribute('OutputPins', tuple())
         self.StoredAttribute('CasingGroup', CasingGroupC(self))
+
         self.Start()
 
     def Start(self):
@@ -166,7 +167,7 @@ class ComponentsHandlerC(StorageItem):
 
         del self.Components[Component.ID]
         if isinstance(Component, ComponentsModule.CasedComponentC):
-            self.Casings.remomve(Component)
+            self.Casings.remove(Component)
 
     def LinkToOthers(self, NewComponent):
         if isinstance(NewComponent, ComponentsModule.ConnexionC):
@@ -211,6 +212,7 @@ class ComponentsHandlerC(StorageItem):
         self.Pins.append(Pin)
         self.ReloadPinIndices()
     def RemoveBoardPin(self, Pin):
+        Pin.BoardGroup.RemovePin(Pin)
         self.Pins.remove(Pin)
         self.ReloadPinIndices()
     def SetPinIndex(self, Pin, NewIndex, Rule = 'roll'):
@@ -508,13 +510,13 @@ class GroupC(StorageItem):
         self.Components.remove(Component)
         self.Connexions.discard(Component)
         self.Wires.discard(Component)
-        if AutoSet and Component in self.SetBy:
+        if AutoSet and (Component in self.SetBy):
             self.RemoveLevelSet(Component)
         if not self.Components and AutoRemove:
             del self.Handler.Groups[self.ID]
 
-    def SetLevel(self, Level, Component, Backtrace, Verbose = False):
-        if Verbose:
+    def SetLevel(self, Level, Component, Backtrace, Log = False, Warn = True):
+        if Log:
             if not Level is None:
                 print(self, self.Level, 'set to', Levels.Names[Level], 'by', Component)
             else:
@@ -525,11 +527,12 @@ class GroupC(StorageItem):
         if len(self.SetBy) == 1:
             self.Level = Level
         elif len(self.SetBy) == 0:
-            if self.StillUseful:
+            if Warn and self.StillUseful:
                 self.UnsetWarning()
             self.Level = Levels.Undef
         else:
-            self.MultipleSetWarning()
+            if Warn:
+                self.MultipleSetWarning()
             self.Level = Levels.Multiple
         if PrevLevel != self.Level:
             for Component in self.Components:
@@ -542,10 +545,10 @@ class GroupC(StorageItem):
             raise Exception("{Component} was not level setter for {self}")
         del self.SetBy[Component]
         if not self.SetBy:
-            self.SetLevel(None, None, [f'RemoveGroupComponent(1) {self}'])
+            self.SetLevel(None, None, [f'RemoveGroupComponent(1) {self}'], Warn = False)
         else:
             PickedComponent = list(self.SetBy.keys())[0]
-            self.SetLevel(self.SetBy[PickedComponent], PickedComponent, [f'RemoveGroupComponent(2) {self}'])
+            self.SetLevel(self.SetBy[PickedComponent], PickedComponent, [f'RemoveGroupComponent(2) {self}'], Warn = False)
 
     def TriggerComponentLevel(self, Component, Backtrace):
         Component.UpdateStyle()

@@ -257,6 +257,7 @@ class BoardPinC(ComponentBase):
         self.StoredAttribute('_Index', None)
         self.StoredAttribute('TypeIndex', None)
         self.StoredAttribute('_Name', '')
+        self.StoredAttribute('BoardGroup', '')
 
         self.Start()
 

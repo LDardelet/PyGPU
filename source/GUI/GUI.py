@@ -15,6 +15,7 @@ from Values import Colors, Params, PinDict
 from Tools import Void, ModesDict, ModeC, SFrame, SEntry, SLabel, SPinEntry, BoardIOWidgetBase, BoardDisplayC
 from Circuit import CLibrary
 from Board import BoardC
+from Export import ExportGUI
 
 matplotlib.use("TkAgg")
 
@@ -58,32 +59,80 @@ class GUI:
         else:
             Info = str(self.Highlighted)
         self.MainFrame.Board.DisplayToolbar.Labels.HighlightLabel['text'] = f"Highlight: {Info}"
-    def GUILayout(self):
-        for Pin, PinEntry in list(self.DisplayedPinsWindgets.items()):
-            if Pin not in self.CH.Pins:
-                if Pin.Type == PinDict.Input or PinEntry.Type != Pin.Type:
-                    PinPanel = self.MainFrame.Right_Panel.Input_Pins
-                    PinSet = self.BoardInputWidgets
+    def BoardPinsLayout(self):
+        CurrentGroups = self.CurrentBoard.Groups
+        InputGroups = {(GroupName, GroupType): GroupData for (GroupName, GroupType), GroupData in CurrentGroups if GroupType == PinDict.Input}
+        OutputGroups = {(GroupName, GroupType): GroupData for (GroupName, GroupType), GroupData in CurrentGroups if GroupType == PinDict.Output}
+        def Row(Pin):
+            if Pin.Type == PinDict.Input:
+                return 1+len(InputGroups)+Pin.TypeIndex
+            else:
+                return 1+len(OutputGroups)+Pin.TypeIndex
+
+        for Pin, PinEntry in list(self.DisplayedPinsWidgets.items()):
+            if Pin not in self.CurrentBoard.Pins or PinEntry.Type != Pin.Type:
+                if Pin.Type == PinDict.Input:
+                    ElementPanel = self.MainFrame.Right_Panel.Input_Pins
+                    ElementSet = self.BoardInputWidgets
                 else:
-                    PinPanel = self.MainFrame.Right_Panel.Output_Pins
-                    PinSet = self.BoardOutputWidgets
-                PinSet.remove(getattr(PinPanel.Destroy(f"PinFrame{Pin.ID}"), SPinEntry.DefaultWidgetName))
-                del self.DisplayedPinsWindgets[Pin]
+                    ElementPanel = self.MainFrame.Right_Panel.Output_Pins
+                    ElementSet = self.BoardOutputWidgets
+                ElementSet.remove(getattr(ElementPanel.Destroy(f"PinFrame{Pin.ID}"), SPinEntry.DefaultWidgetName))
+                del self.DisplayedPinsWidgets[Pin]
             else: # We ensure the pin is in the right location
                 PinEntry.Bits = (Pin.TypeIndex, )
-        for Pin in self.CH.Pins:
-            if Pin not in self.DisplayedPinsWindgets:
+                PinEntry.frame.grid(row = Row(Pin), column = 0)
+        for Pin in self.CurrentBoard.Pins:
+            if Pin not in self.DisplayedPinsWidgets:
                 if Pin.Type == PinDict.Input:
-                    PinFrame = self.MainFrame.Right_Panel.Input_Pins.AddFrame(f"PinFrame{Pin.ID}", row = Pin.TypeIndex+1, column = 0, Border = True, NoName = True)
-                    PinSet = self.BoardInputWidgets
+                    ElementPanel = self.MainFrame.Right_Panel.Input_Pins
+                    ElementSet = self.BoardInputWidgets
                 else:
-                    PinFrame = self.MainFrame.Right_Panel.Output_Pins.AddFrame(f"PinFrame{Pin.ID}", row = Pin.TypeIndex+1, column = 0, Border = True, NoName = True)
-                    PinSet = self.BoardOutputWidgets
+                    ElementPanel = self.MainFrame.Right_Panel.Output_Pins
+                    ElementSet = self.BoardOutputWidgets
+                PinFrame = ElementPanel.AddFrame(f"PinFrame{Pin.ID}", row = Row(Pin), column = 0, Border = True, NoName = True)
                 PinEntry = SPinEntry(PinFrame, Pin)
-                self.DisplayedPinsWindgets[Pin] = PinEntry
-                PinSet.add(PinEntry)
-        self.BoardInputEntry.Bits = tuple(range(len(self.CH.InputPins)))
-        self.BoardOutputLabel.Bits = tuple(range(len(self.CH.OutputPins)))
+                self.DisplayedPinsWidgets[Pin] = PinEntry
+                ElementSet.add(PinEntry)
+
+        for GroupID, GroupWidget in list(self.DisplayedGroupsWidgets.items()):
+            GroupName, GroupType = GroupID
+            if not GroupID in CurrentGroups:
+                if GroupType == PinDict.Input:
+                    ElementPanel = self.MainFrame.Right_Panel.Input_Groups
+                    ElementSet = self.BoardInputWidgets
+                else:
+                    ElementPanel = self.MainFrame.Right_Panel.Output_Groups
+                    ElementSet = self.BoardOutputWidgets
+                ElementSet.remove(getattr(ElementPanel.Destroy(f"GroupFrame{GroupName}"), GroupWidget.DefaultWidgetName))
+                del self.DisplayedGroupsWidgets[GroupName]
+            else: # We ensure the pin is in the right location
+                GroupIndex, GroupBits = CurrentGroups[GroupID]
+                GroupEntry.Bits = GroupBits
+                GroupEntry.grid(row = 1+GroupIndex, column = 0)
+        for GroupID, (GroupIndex, GroupBits) in CurrentGroups.items():
+            if GroupID not in self.DisplayedGroupsWidgets:
+                GroupName, GroupType = GroupID
+                if GroupName == '':
+                    continue
+                if GroupType == PinDict.Input:
+                    ElementPanel = self.MainFrame.Right_Panel.Input_Groups
+                    ElementSet = self.BoardInputWidgets
+                    Row = 1+GroupIndex
+                else:
+                    ElementPanel = self.MainFrame.Right_Panel.Output_Groups
+                    ElementSet = self.BoardOutputWidgets
+                    Row = 1+GroupIndex
+                GroupFrame = ElementPanel.AddFrame(f"GroupFrame{GroupName}", row = Row, column = 0, Border = True, NoName = True)
+                if GroupEntry == PinDict.Input:
+                    SWidget = SEntry
+                else:
+                    SWidget = SLabel
+                GroupWidget = SWidget(GroupFrame, GroupName, GroupBits, Params.GUI.RightPanel.Width//2, True)
+                self.DisplayedGroupsWidgets[GroupID] = GroupWidget
+                ElementSet.add(GroupEntry)
+        self.BoardInputEntry.Bits = tuple(range(len(self.CurrentBoard.InputPins)))
+        self.BoardOutputLabel.Bits = tuple(range(len(self.CurrentBoard.OutputPins)))
     def BoardsList(self):
         self.BoardsMenu['menu'].delete(0, "end")
         Boards = []
@@ -121,14 +170,17 @@ class GUI:
                 UpdateFunction.Callers.clear()
         self.UpdateLocked = False
 
-    UpdateFunctions = (BoardsList, GUILayout, CursorInfo, BoardState, LocalView)
+    UpdateFunctions = (BoardsList, BoardPinsLayout, CursorInfo, BoardState, LocalView)
     for UpdateFunction in UpdateFunctions:
         UpdateFunction.Callers = set()
     UpdateLocked = False
 
     def __init__(self, Args):
-        if not os.path.exists(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder):
-            os.mkdir(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder)
+        if not os.path.exists(Params.GUI.DataAbsPath):
+            os.mkdir(Params.GUI.DataAbsPath)
+        for DataSubFolder in Params.GUI.DataSubFolders:
+            if not os.path.exists(Params.GUI.DataAbsPath + DataSubFolder):
+                os.mkdir(Params.GUI.DataAbsPath + DataSubFolder)
 
         self.MainWindow = Tk.Tk()
 
@@ -139,7 +191,8 @@ class GUI:
         self.LoadedDisplays = []
         self.CurrentBoard = None
         self.CurrentDisplay = None
-        self.DisplayedPinsWindgets = {}
+        self.DisplayedPinsWidgets = {}
+        self.DisplayedGroupsWidgets = {}
 
         self.LoadGUI()
 
@@ -165,13 +218,18 @@ class GUI:
         self.Modes.Default(Message = f'Entry return by {Entry}')
 
     @Trigger
+    @Update(BoardPinsLayout, LocalView)
+    def BoardIOWidgetGroupModification(self):
+        pass
+
+    @Trigger
     @Update(BoardState)
-    def BoardIOWidgetLevelModificationCallback(self, Entry):
+    def BoardIOWidgetLevelModificationCallback(self, Entry): # TODO : seems to be missing a trigger, to update the GUI widgets layout upon board grouop change
         self.CH.Input = Entry.Push(self.CH.Input)
 
     @Trigger  # TODO : merge all callback functions to OnUserAction
     def OnStaticGUIButton(self, Callback, *args, **kwargs):
-        return Callback(self, *args, **kwargs)
+        return Callback(*args, **kwargs)
 
     @Trigger
     def OnKeyRegistration(self, Callback, Key, Mod):
@@ -209,7 +267,7 @@ class GUI:
     @Modes.Default
     def SaveBoard(self, SelectFilename = False):
         if self.CurrentBoard.Filename is None or SelectFilename:
-            Filename = Tk.filedialog.asksaveasfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')
+            Filename = Tk.filedialog.asksaveasfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.DataSubFolders['Projects']), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')
             Force = True
         else:
             Filename = self.CurrentBoard.Filename
@@ -223,7 +281,16 @@ class GUI:
 
     @Modes.Default
     def ExportBoardAsComponent(self):
+        if False and len(self.CH.InputPins) == 0 and len(self.CH.OutputPins) == 0:
+            Log("Impossible to export a board without any IO pin")
+            return
 
+        Export = ExportGUI(self.MainWindow, self.CurrentBoard)
+        Export.MainWindow.wait_window()
+        if Export.Success:
+            Log("Success")
+        else:
+            LogWarning("Component export failed")
 
     def Open(self, New=False, Filename=''):
         if New:
@@ -231,7 +298,7 @@ class GUI:
             self.LoadedBoards.append(BoardC(None, self.NewDisplay()))
         else:
             if not Filename:
-                Filename = Tk.filedialog.askopenfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.BoardSaveSubfolder), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')
+                Filename = Tk.filedialog.askopenfilename(initialdir = os.path.abspath(Params.GUI.DataAbsPath + Params.GUI.DataSubFolders['Projects']), filetypes=[('BOARD file', '.brd')], defaultextension = '.brd')
             if Filename:
                 for Board in self.LoadedBoards:
                     if Board.Filename == Filename:
@@ -261,11 +328,11 @@ class GUI:
         if not Board.Display is None:
             self.LoadedDisplays.remove(Board.Display)
         if len(self.LoadedBoards) == 0:
-            self.MenuSelectBoardName(self.NewBoardStr)
+            self.MenuSelectBoardName(None)
         else:
             self.SelectBoard(self.LoadedBoards[max(0, Index-1)])
 
-    @Update(BoardsList, GUILayout, BoardState)
+    @Update(BoardsList, BoardPinsLayout, BoardState)
     @Modes.Default
     def SelectBoard(self, Board):
         if not self.CurrentBoard is None:
@@ -384,7 +451,7 @@ class GUI:
             if self.CH.HasItem(self.Cursor) and self.CH.FreeSlot(self.Cursor):
                 self.StartComponent(self.Library.Wire)
 
-    @Update(GUILayout, BoardState)
+    @Update(BoardPinsLayout, BoardState)
     def ConfirmComponentRegister(self, Component, Joins):
         self.MoveHighlight()
         if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(Component) or (not Params.GUI.Behaviour.StopWireOnJoin) or not Joins):
@@ -426,7 +493,7 @@ class GUI:
         for Component in self.TmpComponents:
             Component.StartRemoving()
 
-    @Update(GUILayout, BoardState, CursorInfo)
+    @Update(BoardPinsLayout, BoardState, CursorInfo)
     def DeleteConfirm(self): # Called when removing again, actual removing action trigger
         if not self.Highlighted is None and not self.Highlighted.Removing:
             return self.Select()
@@ -543,6 +610,7 @@ class GUI:
         self.AddControlKey('o', lambda key, mod:self.Open(New=False), Mod = CTRL)
         self.AddControlKey('n', lambda key, mod:self.Open(New=True), Mod = CTRL)
         self.AddControlKey('w', lambda key, mod:self.CloseBoard(), Mod = CTRL)
+        self.AddControlKey('e', lambda key, mod:self.ExportBoardAsComponent(), Mod = CTRL)
 
     def TextFilter(self, Callback, Symbol, Modifier):
         #if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5', 'f6'): # Hardcoded so far, should be taken from Params as well
@@ -605,7 +673,7 @@ class GUI:
 
     def LoadUpdateFunctions(self):
         UpdateFrame = self.MainFrame.Top_Panel.AddFrame("UpdateFunctions", Side = Tk.TOP, NoName = True)
-        UpdateFrame.AddWidget(Tk.Button, "GUI_layout", text = "GUI layout", command = self.GUILayout, width = 20)
+        UpdateFrame.AddWidget(Tk.Button, "Pins_layout", text = "Pins layout", command = self.BoardPinsLayout, width = 20)
         UpdateFrame.AddWidget(Tk.Button, "Cursor_info", text = "Cursor info", command = self.CursorInfo, width = 20)
         UpdateFrame.AddWidget(Tk.Button, "Board_state", text = "Board state", command = self.BoardState, width = 20)
         UpdateFrame.AddWidget(Tk.Button, "Local_view", text = "Local view", command = self.LocalView, width = 20)
@@ -655,7 +723,7 @@ class GUI:
 
         self._Icons['Cross'] = Tk.PhotoImage(file="./images/Cross.png").subsample(40)
         BoardSelectionFrame.AddWidget(Tk.Button, "CloseBoard", image = self._Icons['Cross'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.CloseBoard))
-        self._Icons['Component'] = Tk.PhotoImage(file="./images/Component.png")
+        self._Icons['Component'] = Tk.PhotoImage(file="./images/Component.png").subsample(7)
         BoardSelectionFrame.AddWidget(Tk.Button, "ToComponent", image = self._Icons['Component'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.ExportBoardAsComponent))
 
     def LoadDisplayToolbar(self):
@@ -690,8 +758,10 @@ class GUI:
         self.BoardInputWidgets =  {self.BoardInputEntry}
         self.BoardOutputWidgets = {self.BoardOutputLabel}
 
-        self.MainFrame.Right_Panel.AddFrame("Input_Pins", row = 2, column = 0, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
-        self.MainFrame.Right_Panel.AddFrame("Output_Pins", row = 2, column = 1, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
+        self.MainFrame.Right_Panel.AddFrame("Input_Groups", row = 2, column = 0, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
+        self.MainFrame.Right_Panel.AddFrame("Input_Pins", row = 3, column = 0, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
+        self.MainFrame.Right_Panel.AddFrame("Output_Groups", row = 2, column = 1, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
+        self.MainFrame.Right_Panel.AddFrame("Output_Pins", row = 3, column = 1, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
 
     def LoadLibraryGUI(self):
         self.CompToButtonMap = {}

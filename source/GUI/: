@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib
 from functools import cached_property
 from Console import Log
-from Values import Colors, Params, PinDict, BoardGroupsDict
+from Values import Colors, Params, PinDict
 
 ForceReload = True
 
@@ -200,12 +200,6 @@ class BoardIOWidgetBase:
     _Bits = tuple()
     Type = None
     DefaultWidgetName = "Widget"
-    def __init__(self, Frame, ChildName):
-        self.frame = Frame.frame
-        if ChildName is None:
-            ChildName = self.DefaultWidgetName
-        Frame.AdvertiseChild(self, ChildName)
-
     def Push(self, PreviousBoardLevel):
         return (PreviousBoardLevel & ~self.Mask) | self.MaskedLevel
     def Pull(self, NewBoardLevel, NewBoardValidity):
@@ -228,7 +222,6 @@ class BoardIOWidgetBase:
         for Bit in Bits:
             self.Mask |= 1<<Bit
         self.OnBitsChange()
-        self.UpdateRepresentation()
     @property
     def MaskedLevel(self):
         ML = 0
@@ -248,11 +241,7 @@ class BoardIOWidgetBase:
     def MaxLevel(self):
         return (2**self.NBits) - 1
 
-class IntBinHexWidget(BoardIOWidgetBase):
-    Name = None
-    def __init__(self, TotalWidth):
-        self.NameLabel = Tk.Label(self.frame, text = f"{self.Name} ({self.NBits} bits)", width = TotalWidth//3, anchor = Tk.W)
-        self.NameLabel.grid(row = 0, column = 0, sticky=Tk.EW)
+class IntBinHexWidget:
     @property
     def int(self):
         return str(self.Level)
@@ -277,17 +266,14 @@ class IntBinHexWidget(BoardIOWidgetBase):
             self.Set(int(self.HexVar.get(), 16))
         except ValueError:
             self.Set(0)
-    def OnBitsChange(self):
-        self.NameLabel.configure(text = f"{self.Name} ({self.NBits} bits)")
 
-class SEntry(IntBinHexWidget):
+class SEntry(BoardIOWidgetBase, IntBinHexWidget):
     Type = PinDict.Input
-    def __init__(self, Frame, Name, Bits, TotalWidth, Group = False, ChildName = None):
-        BoardIOWidgetBase.__init__(self, Frame, ChildName)
-        
+    def __init__(self, Frame, Name, Bits, TotalWidth, ChildName = None):
+        self.frame = Frame.frame
         self.Name = Name
-        IntBinHexWidget.__init__(self, TotalWidth)
-
+        self.NameLabel = Tk.Label(self.frame, text = f"", width = TotalWidth)
+        self.NameLabel.grid(row = 0, column = 0, columnspan = 3, sticky=Tk.EW)
         self.IntVar = Tk.StringVar(self.frame, self.int)
         self.BinVar = Tk.StringVar(self.frame, self.bin)
         self.HexVar = Tk.StringVar(self.frame, self.hex)
@@ -300,10 +286,17 @@ class SEntry(IntBinHexWidget):
         self.frame.bind('<FocusOut>', self.Reset)
 
         self.Bits = Bits
+        if ChildName is None:
+            ChildName = self.DefaultWidgetName
+        Frame.AdvertiseChild(self, ChildName)
 
     def Reset(self, *args, **kwargs): # avoid unconfirmed changes to be propagated
         if self.frame.focus_get() != None:
             self.UpdateRepresentation()
+
+    def OnBitsChange(self):
+        self.NameLabel.configure(text = f"{self.Name} ({self.NBits} bits)")
+        self.UpdateRepresentation()
 
     def Set(self, Level):
         if Level > self.MaxLevel:
@@ -312,6 +305,31 @@ class SEntry(IntBinHexWidget):
             self.Level = Level
         self.GUI.BoardIOWidgetReturnCallback(self)
         self.GUI.BoardIOWidgetLevelModificationCallback(self)
+
+    @property
+    def int(self):
+        return str(self.Level)
+    def IntSet(self, *args, **kwargs):
+        try:
+            self.Set(int(self.IntVar.get()))
+        except ValueError:
+            self.Set(0)
+    @property
+    def bin(self):
+        return format(self.Level, f'#0{2+self.NBits}b')
+    def BinSet(self, *args, **kwargs):
+        try:
+            self.Set(int(self.BinVar.get(), 2))
+        except ValueError:
+            self.Set(0)
+    @property
+    def hex(self):
+        return format(self.Level, f'#0{2+(self.NBits+3)//4}x')
+    def HexSet(self, *args, **kwargs):
+        try:
+            self.Set(int(self.HexVar.get(), 16))
+        except ValueError:
+            self.Set(0)
 
     def UpdateRepresentation(self):
         if self.Valid:
@@ -325,14 +343,13 @@ class SEntry(IntBinHexWidget):
     def __repr__(self):
         return self.Name
 
-class SLabel(IntBinHexWidget):
+class SLabel(BoardIOWidgetBase, IntBinHexWidget):
     Type = PinDict.Output
-    def __init__(self, Frame, Name, Bits, TotalWidth, Group = False, ChildName = None):
-        BoardIOWidgetBase.__init__(self, Frame, ChildName)
-
+    def __init__(self, Frame, Name, Bits, TotalWidth, ChildName = None):
+        self.frame = Frame.frame
         self.Name = Name
-        IntBinHexWidget.__init__(self, TotalWidth)
-
+        self.NameLabel = Tk.Label(self.frame, text = f"", width = TotalWidth)
+        self.NameLabel.grid(row = 0, column = 0, columnspan = 3)
         self.Labels =  (Tk.Label(self.frame, text=self.int, width = TotalWidth//3, anchor = Tk.W),
                         Tk.Label(self.frame, text=self.bin, width = TotalWidth//3, anchor = Tk.W),
                         Tk.Label(self.frame, text=self.hex, width = TotalWidth//3, anchor = Tk.W))
@@ -340,7 +357,22 @@ class SLabel(IntBinHexWidget):
             Label.grid(row = 1, column = nLabel)
 
         self.Bits = Bits
+        if ChildName is None:
+            ChildName = self.DefaultWidgetName
+        Frame.AdvertiseChild(self, ChildName)
 
+    def OnBitsChange(self):
+        self.NameLabel.configure(text = f"{self.Name} ({self.NBits} bits)")
+
+    @property
+    def int(self):
+        return str(self.Level)
+    @property
+    def bin(self):
+        return format(self.Level, f'#0{2+self.NBits}b')
+    @property
+    def hex(self):
+        return format(self.Level, f'#0{2+(self.NBits+3)//4}x')
     def UpdateRepresentation(self):
         if self.Valid:
             Color = Colors.GUI.Widget.validLabel
@@ -355,30 +387,21 @@ class SLabel(IntBinHexWidget):
 
 class SPinEntry(BoardIOWidgetBase):
     def __init__(self, Frame, Pin, ChildName = None):
-        BoardIOWidgetBase.__init__(self, Frame, ChildName)
-        
+        self.frame = Frame.frame
         self.Pin = Pin
 
         self.Type = self.Pin.Type
 
-        self.IndexLabel = Tk.Label(self.frame, text = f"Pin {self.Pin.Index}")
-        self.IndexLabel.grid(column = 0, row = 1)
-
-        Tk.Label(self.frame, text = f"Name:").grid(column = 1, row = 0)
+        self.IDLabel = Tk.Label(self.frame, text = f"Pin {self.Pin.Label}")
+        self.IDLabel.grid(column = 0, row = 0)
         self.NameVar = Tk.StringVar(self.frame, self.Pin.Name)
         self.NameEntry = Tk.Entry(self.frame, textvariable = self.NameVar, width = Params.GUI.RightPanel.PinNameEntryWidth)
-        self.NameEntry.grid(column = 1, row = 1)
+        self.NameEntry.grid(column = 0, row = 1)
         self.NameEntry.bind("<Return>", self.SetName)
-        self.frame.bind('<FocusOut>', self.ResetName)
-
-        Tk.Label(self.frame, text = f"Group:").grid(column = 2, row = 0)
-        self.GroupVar = Tk.StringVar(self.frame, self.Pin.BoardGroup)
-        self.GroupVar.trace_add('write', lambda *args, self=self, **kwargs: self.SetGroup(self.GroupVar.get()))
-        self.GroupMenu = Tk.OptionMenu(self.frame, self.GroupVar, *(('',) + BoardGroupsDict.Names[self.Type]))
-        self.GroupMenu.grid(column = 2, row = 1)
+        self.frame.bind('<FocusOut>', self.Reset)
 
         self.SetButton = Tk.Button(self.frame, bg = Colors.Component.Levels[self.Level], activebackground = Colors.Component.Levels[self.Level], command = self.Switch)
-        self.SetButton.grid(column = 3, row = 0, rowspan = 2)
+        self.SetButton.grid(column = 1, row = 0, rowspan = 2)
         if self.Type == PinDict.Output:
             self.SetButton.configure(state = Tk.DISABLED)
             self.InvalidColor = Colors.GUI.Widget.wrongLabel
@@ -389,8 +412,13 @@ class SPinEntry(BoardIOWidgetBase):
 
         self.Bits = (Pin.TypeIndex,)
 
+        if ChildName is None:
+            ChildName = self.DefaultWidgetName
+        Frame.AdvertiseChild(self, ChildName)
+
     def OnBitsChange(self):
-        self.IndexLabel.configure(text = f"Pin {self.Pin.Index}")
+        self.frame.grid(row = self.Pin.TypeIndex+1, column = 0)
+        self.IDLabel['text'] = f"Pin {self.Pin.Label}"
 
     def Switch(self):
         self.Level = 1 - self.Level
@@ -398,20 +426,11 @@ class SPinEntry(BoardIOWidgetBase):
 
     def SetName(self, *args, **kwargs):
         self.Pin.Name = self.NameVar.get()[:Params.GUI.RightPanel.PinNameEntryWidth]
+        self.IDLabel['text'] = self.Pin.Label
         self.GUI.BoardIOWidgetReturnCallback(self)
-    def ResetName(self, *args, **kwargs):
+    def Reset(self, *args, **kwargs):
         if self.frame.focus_get() != None and self.NameVar.get() != self.Pin.Name:
             self.NameVar.set(self.Pin.Name)
-    def SetGroup(self, Group):
-        if self.Pin.BoardGroup == Group:
-            return
-        self.Pin.Group = Group
-        if Group:
-            self.NameEntry.configure(state = Tk.DISABLED)
-        else:
-            self.NameEntry.configure(state = Tk.NORMAL)
-
-        self.GUI.BoardIOWidgetGroupModification()
 
     def UpdateRepresentation(self):
         if not self.Valid:
@@ -516,4 +535,3 @@ class BoardDisplayC:
     @property
     def ySize(self):
         return Params.GUI.View.FigRatio * self.xSize
-

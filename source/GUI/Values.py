@@ -66,7 +66,8 @@ class Params:
     class GUI:
         Name = 'Logic Gates Simulator'
         DataFolder = '~/Documents/PyGPUFiles/'
-        BoardSaveSubfolder = 'Projects/'
+        DataSubFolders = {"Libraries":"Libraries/",
+                          "Projects" :"Projects/",}
         DataAbsPath = None
         class Library:
             Columns = 2
@@ -151,11 +152,13 @@ class Params:
             DefaultBoardPinBuildMode = 0
             AskDeleteConfirmation = False
             AutoSwitchBoardPins = False # Disabled for now as it cannot be changed afterwards
+    class ExportGUI:
+        Name = "Export component"
 
 Params.GUI.View.FigRatio = Params.GUI.View.FigSize[1] / Params.GUI.View.FigSize[0]
 Params.Board.Size = Params.Board.Size - (Params.Board.Size & 1)
 Params.Board.Max = Params.Board.Size // 2
-Params.GUI.DataAbsPath = os.path.realpath(os.path.expanduser(Params.GUI.DataFolder))
+Params.GUI.DataAbsPath = os.path.realpath(os.path.expanduser(Params.GUI.DataFolder)) + '/'
 Params.GUI.Dimensions.CasingPinBaseLength = 1.-Params.GUI.Dimensions.CasingCornerOffset
 Params.GUI.Dimensions.CasingPinTotalLength = Params.GUI.Dimensions.CasingPinBaseLength + Params.GUI.Dimensions.CasingPinBonusLength
 if Params.GUI.Dimensions.CasingPinTotalLength == 0:
@@ -191,3 +194,6 @@ class PinDict:
                                         [_l-_la, -_h], 
                                         [_l-_la, _h]]))
 
+class BoardGroupsDict:
+    Names = {PinDict.Input: ('A', 'B', 'In'), 
+             PinDict.Output:('C', 'D', 'Out')}
