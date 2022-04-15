@@ -60,9 +60,9 @@ class GUI:
             Info = str(self.Highlighted)
         self.MainFrame.Board.DisplayToolbar.Labels.HighlightLabel['text'] = f"Highlight: {Info}"
     def BoardPinsLayout(self):
-        CurrentGroups = self.CurrentBoard.Groups
-        InputGroups = {(GroupName, GroupType): GroupData for (GroupName, GroupType), GroupData in CurrentGroups if GroupType == PinDict.Input}
-        OutputGroups = {(GroupName, GroupType): GroupData for (GroupName, GroupType), GroupData in CurrentGroups if GroupType == PinDict.Output}
+        InputGroups = self.CurrentBoard.InputGroups
+        OutputGroups = self.CurrentBoard.OutputGroups
+
         def Row(Pin):
             if Pin.Type == PinDict.Input:
                 return 1+len(InputGroups)+Pin.TypeIndex
@@ -72,65 +72,56 @@ class GUI:
         for Pin, PinEntry in list(self.DisplayedPinsWidgets.items()):
             if Pin not in self.CurrentBoard.Pins or PinEntry.Type != Pin.Type:
                 if Pin.Type == PinDict.Input:
-                    ElementPanel = self.MainFrame.Right_Panel.Input_Pins
-                    ElementSet = self.BoardInputWidgets
+                    WidgetParentFrame = self.MainFrame.Right_Panel.Input_Pins
+                    BoardWidgetSet = self.BoardInputWidgets
                 else:
-                    ElementPanel = self.MainFrame.Right_Panel.Output_Pins
-                    ElementSet = self.BoardOutputWidgets
-                ElementSet.remove(getattr(ElementPanel.Destroy(f"PinFrame{Pin.ID}"), SPinEntry.DefaultWidgetName))
+                    WidgetParentFrame = self.MainFrame.Right_Panel.Output_Pins
+                    BoardWidgetSet = self.BoardOutputWidgets
+                PinWidget = self.DisplayedPinsWidgets[Pin]
+                WidgetParentFrame.Destroy(f"PinFrame{Pin.ID}")
+                BoardWidgetSet.remove(PinWidget)
                 del self.DisplayedPinsWidgets[Pin]
             else: # We ensure the pin is in the right location
                 PinEntry.Bits = (Pin.TypeIndex, )
                 PinEntry.frame.grid(row = Row(Pin), column = 0)
+                PinEntry.UpdateNameInGroup()
         for Pin in self.CurrentBoard.Pins:
             if Pin not in self.DisplayedPinsWidgets:
                 if Pin.Type == PinDict.Input:
-                    ElementPanel = self.MainFrame.Right_Panel.Input_Pins
-                    ElementSet = self.BoardInputWidgets
+                    WidgetParentFrame = self.MainFrame.Right_Panel.Input_Pins
+                    BoardWidgetSet = self.BoardInputWidgets
                 else:
-                    ElementPanel = self.MainFrame.Right_Panel.Output_Pins
-                    ElementSet = self.BoardOutputWidgets
-                PinFrame = ElementPanel.AddFrame(f"PinFrame{Pin.ID}", row = Row(Pin), column = 0, Border = True, NoName = True)
+                    WidgetParentFrame = self.MainFrame.Right_Panel.Output_Pins
+                    BoardWidgetSet = self.BoardOutputWidgets
+                PinFrame = WidgetParentFrame.AddFrame(f"PinFrame{Pin.ID}", row = Row(Pin), column = 0, Border = True, NoName = True)
                 PinEntry = SPinEntry(PinFrame, Pin)
                 self.DisplayedPinsWidgets[Pin] = PinEntry
-                ElementSet.add(PinEntry)
+                BoardWidgetSet.add(PinEntry)
+        
+        for GroupType, UsedGroups, WidgetParentFrame, BoardWidgetSet, SWidget in ((PinDict.Input,  InputGroups,  self.MainFrame.Right_Panel.Input_Groups,  self.BoardInputWidgets,  SEntry),
+                                                                          (PinDict.Output, OutputGroups, self.MainFrame.Right_Panel.Output_Groups, self.BoardOutputWidgets, SLabel)):
+            for GroupName in PinDict.BoardGroupsNames[GroupType]:
+                GroupID = (GroupName, GroupType)
+                GroupFrameName = f"GroupFrame{GroupName}"
+                if GroupID in UsedGroups:
+                    GroupBits = tuple(sorted([Pin.TypeIndex for Pin in UsedGroups[GroupID]]))
+                    GroupRow = 1+[PossibleGroupName for PossibleGroupName in PinDict.BoardGroupsNames[GroupType] if (PossibleGroupName, GroupType) in UsedGroups].index(GroupName)
+                    if GroupID in self.DisplayedGroupsWidgets:
+                        GroupWidget = self.DisplayedGroupsWidgets[GroupID]
+                        GroupWidget.Bits = GroupBits
+                        GroupWidget.frame.grid(row = GroupRow, column = 0)
+                    else:
+                        GroupFrame = WidgetParentFrame.AddFrame(GroupFrameName, row = GroupRow, column = 0, Border = True, NoName = True)
+                        GroupWidget = SWidget(GroupFrame, GroupName, GroupBits, Params.GUI.RightPanel.Width//2, True)
+                        BoardWidgetSet.add(GroupWidget)
+                        self.DisplayedGroupsWidgets[GroupID] = GroupWidget
+                else:
+                    if GroupID in self.DisplayedGroupsWidgets:
+                        GroupWidget = self.DisplayedGroupsWidgets[GroupID]
+                        WidgetParentFrame.Destroy(GroupFrameName)
+                        BoardWidgetSet.remove(GroupWidget)
+                        del self.DisplayedGroupsWidgets[GroupID]
 
-        for GroupID, GroupWidget in list(self.DisplayedGroupsWidgets.items()):
-            GroupName, GroupType = GroupID
-            if not GroupID in CurrentGroups:
-                if GroupType == PinDict.Input:
-                    ElementPanel = self.MainFrame.Right_Panel.Input_Groups
-                    ElementSet = self.BoardInputWidgets
-                else:
-                    ElementPanel = self.MainFrame.Right_Panel.Output_Groups
-                    ElementSet = self.BoardOutputWidgets
-                ElementSet.remove(getattr(ElementPanel.Destroy(f"GroupFrame{GroupName}"), GroupWidget.DefaultWidgetName))
-                del self.DisplayedGroupsWidgets[GroupName]
-            else: # We ensure the pin is in the right location
-                GroupIndex, GroupBits = CurrentGroups[GroupID]
-                GroupEntry.Bits = GroupBits
-                GroupEntry.grid(row = 1+GroupIndex, column = 0)
-        for GroupID, (GroupIndex, GroupBits) in CurrentGroups.items():
-            if GroupID not in self.DisplayedGroupsWidgets:
-                GroupName, GroupType = GroupID
-                if GroupName == '':
-                    continue
-                if GroupType == PinDict.Input:
-                    ElementPanel = self.MainFrame.Right_Panel.Input_Groups
-                    ElementSet = self.BoardInputWidgets
-                    Row = 1+GroupIndex
-                else:
-                    ElementPanel = self.MainFrame.Right_Panel.Output_Groups
-                    ElementSet = self.BoardOutputWidgets
-                    Row = 1+GroupIndex
-                GroupFrame = ElementPanel.AddFrame(f"GroupFrame{GroupName}", row = Row, column = 0, Border = True, NoName = True)
-                if GroupEntry == PinDict.Input:
-                    SWidget = SEntry
-                else:
-                    SWidget = SLabel
-                GroupWidget = SWidget(GroupFrame, GroupName, GroupBits, Params.GUI.RightPanel.Width//2, True)
-                self.DisplayedGroupsWidgets[GroupID] = GroupWidget
-                ElementSet.add(GroupEntry)
         self.BoardInputEntry.Bits = tuple(range(len(self.CurrentBoard.InputPins)))
         self.BoardOutputLabel.Bits = tuple(range(len(self.CurrentBoard.OutputPins)))
     def BoardsList(self):
@@ -159,7 +150,7 @@ class GUI:
             if Board == self.CurrentBoard:
                 self.BoardVar.set(BoardName)
 
-    def SolveUpdateRequests(self, func, Log = False):
+    def SolveUpdateRequests(self, func, Log = True):
         if Log:
             print(f"Triggered by {func.__name__}")
         for UpdateFunction in self.UpdateFunctions:
@@ -218,7 +209,7 @@ class GUI:
         self.Modes.Default(Message = f'Entry return by {Entry}')
 
     @Trigger
-    @Update(BoardPinsLayout, LocalView)
+    @Update(BoardPinsLayout, BoardState)
     def BoardIOWidgetGroupModification(self):
         pass
 
@@ -271,6 +262,7 @@ class GUI:
             Force = True
         else:
             Filename = self.CurrentBoard.Filename
+            Force = False
         if Filename:
             Success = self.CurrentBoard.Save(Filename, Force = Force)
             if Success:
@@ -379,14 +371,9 @@ class GUI:
 
     @Modes.Build
     @Update(LocalView)
-    def StartComponent(self, CClass, Rotation = None):
-        if Rotation is None:
-            if CClass == self.Library.Wire:
-                Rotation = Params.GUI.Behaviour.DefaultWireRotation
-            else:
-                Rotation = 0
+    def StartComponent(self, CClass, Rotation = 0, Symmetric = False):
         self.SetLibraryButtonColor(self.CompToButtonMap[CClass])
-        self.TmpComponents.add(CClass(self.Cursor, Rotation))
+        self.TmpComponents.add(CClass(self.Cursor, Rotation, Symmetric))
 
     @Update(LocalView)
     def ClearTmpComponents(self):
@@ -427,14 +414,14 @@ class GUI:
         self.CurrentDisplay.UpdateCursorStyle(self.Modes.Current.Color)
 
     @Update(LocalView)
-    def SetWireBuildMode(self, mode):
-        self.WireButtons[mode].configure(background = Colors.GUI.Widget.pressed)
-        self.WireButtons[1-mode].configure(background = Colors.GUI.Widget.default)
-        if mode != self.Library.Wire.BuildMode:
-            self.Library.Wire.BuildMode = mode
+    def SetWireSymmetry(self, Symmetric):
+        self.WireButtons[int(Symmetric)].configure(background = Colors.GUI.Widget.pressed)
+        self.WireButtons[1-int(Symmetric)].configure(background = Colors.GUI.Widget.default)
+        if Symmetric != self.Library.Wire.DefaultSymmetric:
+            self.Library.Wire.DefaultSymmetric = Symmetric
             if self.Modes.Build:
                 for Component in self.TmpComponents:
-                    if self.Library.IsWire(Component):
+                    if self.Library.IsWire(Component) and Component.Symmetric != Symmetric:
                         Component.Switch()
 
     def Set(self):
@@ -464,8 +451,6 @@ class GUI:
         if self.Modes.Build:
             for Component in self.TmpComponents:
                 Component.Switch()
-                if self.Library.IsWire(Component):
-                    self.SetWireBuildMode(self.Library.Wire.BuildMode)
         elif self.Modes.Default:
             self.NextHighlight()
 
@@ -698,11 +683,11 @@ class GUI:
 
     def LoadControls(self):
         self._Icons['WSImage'] = Tk.PhotoImage(file="./images/WireStraight.png")
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireStraight", image=self._Icons['WSImage'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.SetWireBuildMode, 0))
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireStraight", image=self._Icons['WSImage'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.SetWireSymmetry, False))
         self._Icons['WDImage'] = Tk.PhotoImage(file="./images/WireDiagonal.png")
-        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireDiagonal", image=self._Icons['WDImage'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.SetWireBuildMode, 1))
+        self.MainFrame.Board.Controls.AddWidget(Tk.Button, "WireDiagonal", image=self._Icons['WDImage'], height = 30, width = 30, command = lambda:self.OnStaticGUIButton(self.SetWireSymmetry, True))
         self.WireButtons = (self.MainFrame.Board.Controls.WireStraight, self.MainFrame.Board.Controls.WireDiagonal)
-        self.SetWireBuildMode(Params.GUI.Behaviour.DefaultWireBuildMode)
+        self.SetWireSymmetry(Params.GUI.Behaviour.DefaultWireSymmetric)
         self._Icons['DotImage'] = Tk.PhotoImage(file="./images/Dot.png").subsample(10)
         self._Icons['CrossedDotImage'] = Tk.PhotoImage(file="./images/CrossedDot.png").subsample(10)
         self.MainFrame.Board.Controls.AddWidget(Tk.Button, "ToggleConnexionButton", image=self._Icons['DotImage'], height = 30, width = 30, state = Tk.DISABLED, command = lambda:self.OnStaticGUIButton(self.ToggleConnexion))

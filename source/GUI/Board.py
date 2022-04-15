@@ -1,15 +1,65 @@
 import numpy as np
 
-from Circuit import ComponentsHandlerC, TruthTableC
-from Storage import FileHandlerC
+from Circuit import ComponentsHandlerC
+from Storage import FileHandlerC, StorageItem, BaseLibrary
 
-from Values import PinDict, BoardGroupsDict
+from Values import PinDict
 from Console import Log, LogWarning, LogSuccess
+
+class TruthTableC(StorageItem):
+    LibRef = "TruthTable"
+    def __init__(self):
+        self.StoredAttribute('Data', np.zeros(0, dtype = int))
+        self.UpToDate = False
+
+class BoardGroupsHandlerC(StorageItem):
+    LibRef = "BoardGroupsHandlerC"
+    NoneBoardGroupID = (PinDict.NoneBoardGroupName, None)
+    def __init__(self):
+        self.StoredAttribute('Groups', {self.NoneBoardGroupID:set()})
+        self.StoredAttribute('Pins', {})
+    def Register(self, Pin):
+        Pin.BoardGroup = self
+        self.Groups[self.NoneBoardGroupID].add(Pin)
+        self.Pins[Pin] = self.NoneBoardGroupID
+    def Unregister(self, Pin):
+        self.Groups[self.Pins[Pin]].remove(Pin)
+        del self.Pins[Pin]
+        Pin.BoardGroup = None
+    def Set(self, Pin, GroupName = None):
+        if GroupName != PinDict.NoneBoardGroupName and GroupName not in PinDict.BoardGroupsNames[Pin.Type]:
+            raise Exception("Wrong board group for pin {Pin}")
+        InitialGroupName = self.Pins[Pin]
+        self.Groups[InitialGroupName].remove(Pin)
+        if InitialGroupName != self.NoneBoardGroupID and not self.Groups[InitialGroupName]:
+            del self.Groups[InitialGroupName]
+
+        GroupID = (GroupName, Pin.Type)
+        if GroupID not in self.Groups:
+            self.Groups[GroupID] = {Pin}
+        else:
+            self.Groups[GroupID].add(Pin)
+        self.Pins[Pin] = GroupID
+    def Index(self, Pin):
+        return sorted(reversed([GroupPin.Index for GroupPin in self.Groups[self.Pins[Pin]]])).index(Pin.Index) # Reverse for little endian
+    @property
+    def InputGroups(self):
+        return {(GroupName, GroupType):Pins for (GroupName, GroupType), Pins in self.Groups.items() if GroupType == PinDict.Input}
+    @property
+    def OutputGroups(self):
+        return {(GroupName, GroupType):Pins for (GroupName, GroupType), Pins in self.Groups.items() if GroupType == PinDict.Output}
+    def __call__(self, Pin):
+        return self.Pins[Pin][0]
+    def Name(self, Pin):
+        if self.Pins[Pin] == self.NoneBoardGroupID:
+            return ''
+        return f"{self.Pins[Pin][0]}{self.Index(Pin)}"
 
 class BoardC:
     Untitled = "Untitled"
     _SavedItems = (('ComponentsHandler', ComponentsHandlerC),
-                  ('TruthTable', TruthTableC))
+                  ('TruthTable', TruthTableC),
+                  ('BoardGroupsHandler', BoardGroupsHandlerC))
     def __init__(self, Filename = None, Display = None, ParentBoard = None):
         self.FileHandler = FileHandlerC()
         self.Filename = Filename
@@ -26,7 +76,8 @@ class BoardC:
         else:
             for Item, DefaultClass in self._SavedItems:
                 setattr(self, Item, DefaultClass())
-
+        
+        self.ComponentsHandler.BoardGroupsHandler = self.BoardGroupsHandler
         self.Display.SetView()
 
     def Save(self, Filename, Force = False):
@@ -82,45 +133,13 @@ class BoardC:
         return self.ComponentsHandler.OutputPins
     @property
     def Groups(self):
-        Pins = {GroupName:set() for GroupName in ('',) + BoardGroupsDict.Names[PinDict.Input] + BoardGroupsDict.Names[PinDict.Output]}
-        for Pin in self.Pins:
-            Pins[Pin.BoardGroup].add(Pin.TypeIndex)
-        Groups = {}
-        for GroupType in (PinDict.Input, PinDict.Output):
-            Index = 0
-            for GroupName in BoardGroupsDict.Names[GroupType]:
-                if Pins[GroupName]:
-                    Groups[(GroupName, GroupType)] = (Index, tuple(Pins[GroupName]))
-                    Index += 1
-        return Groups
+        return self.BoardGroupsHandler.Groups
     @property
     def InputGroups(self):
-        Pins = {GroupName:set() for GroupName in ('',) + BoardGroupsDict.Names[PinDict.Input]}
-        for Pin in self.InputPins:
-            Pins[Pin.BoardGroup].add(Pin.TypeIndex)
-        Index = 0
-        Groups = {}
-        for GroupName in BoardGroupsDict.Names[PinDict.Input]:
-            if Pins[GroupName]:
-                Groups[(GroupName, PinDict.Input)] = (Index, tuple(Pins[GroupName]))
-                Index += 1
-        return Groups
+        return self.BoardGroupsHandler.InputGroups
     @property
     def OutputGroups(self):
-        Pins = {GroupName:set() for GroupName in ('',) + BoardGroupsDict.Names[PinDict.Output]}
-        for Pin in self.OutputPins:
-            Pins[Pin.BoardGroup].add(Pin.TypeIndex)
-        Index = 0
-        Groups = {}
-        for GroupName in BoardGroupsDict.Names[PinDict.Output]:
-            if Pins[GroupName]:
-                Groups[(GroupName, PinDict.Output)] = (Index, tuple(Pins[GroupName]))
-                Index += 1
-        return Groups
+        return self.BoardGroupsHandler.OutputGroups
 
-
-class BoardGroup:
-    def __init__(self, Name, Pins, Type):
-        self.Name = Name
-        self.Pins = Pins
-        self.Type = Type
+BaseLibrary.Advertise(TruthTableC)
+BaseLibrary.Advertise(BoardGroupsHandlerC)

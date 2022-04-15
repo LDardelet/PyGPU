@@ -64,9 +64,13 @@ class ComponentBase(StorageItem):
     RotationAllowed = True
     CName = None
     Book = None
-    def __init__(self, Location=None, Rotation=None): # As base for components, only one we cannot remove default arguments
+    DefaultSymmetric = False
+    def __init__(self, Location=None, Rotation=None, Symmetric=None): # As base for components, only one we cannot remove default arguments
         self.StoredAttribute('Location', Location)
         self.StoredAttribute('Rotation', Rotation)
+        if Symmetric is None:
+            Symmetric = self.DefaultSymmetric
+        self.StoredAttribute('Symmetric', Symmetric)
         self.StoredAttribute('ID', None)
         self.StoredAttribute('State', States.Building)
         self.StoredAttribute('Group', None)
@@ -136,7 +140,11 @@ class ComponentBase(StorageItem):
     def CanFix(self): # Property that ensures all condition have been checked for this particular component to be fixed
         return True
     def Switch(self):
-        pass
+        if not self.State.Building:
+            raise Exception(f"{self} switched while not building")
+        self.Symmetric = not self.Symmetric
+        self.__class__.DefaultSymmetric = self.Symmetric # we assume we want to keep that behaviour
+        self.UpdateLocation()
     def Drag(self, Cursor):
         pass
     def PlotInit(self):
@@ -247,17 +255,15 @@ class ComponentBase(StorageItem):
 class BoardPinC(ComponentBase):
     CName = "Board Pin"
     LibRef = "BoardPin"
-    BuildMode = Params.GUI.Behaviour.DefaultBoardPinBuildMode
-    def __init__(self, Location, Rotation):
-        super().__init__(Location, Rotation)
-        self.StoredAttribute('_Type', self.__class__.BuildMode) 
+    def __init__(self, Location, Rotation, Symmetric):
+        super().__init__(Location, Rotation, Symmetric)
         self.StoredAttribute('DefinedLevel', Levels.Undef)
         self.StoredAttribute('_PinLabelRule', 0b11)
         self.StoredAttribute('Side', None)
         self.StoredAttribute('_Index', None)
         self.StoredAttribute('TypeIndex', None)
         self.StoredAttribute('_Name', '')
-        self.StoredAttribute('BoardGroup', '')
+        self.StoredAttribute('BoardGroup', None)
 
         self.Start()
 
@@ -283,12 +289,6 @@ class BoardPinC(ComponentBase):
         LabelCorners = self.LabelCorners
         for nCorner in range(5):
             self.Plots[2+nCorner].set_data(*LabelCorners[(nCorner, (nCorner+1)%5),:].T)
-
-    def Switch(self):
-        if not self.State.Building:
-            raise Exception(f"{self} switched while not building")
-        self.__class__.BuildMode = 1-self.__class__.BuildMode
-        self.Type = 1-self.Type
 
     @property
     def LabelCorners(self):
@@ -330,24 +330,8 @@ class BoardPinC(ComponentBase):
 
     @property
     def Type(self):
-        return self._Type
-    @Type.setter
-    def Type(self, Value):
-        if self._Type == Value:
-            return
-        self._Type = Value
-        self.UpdateLocation()
-        if self.State.Building:
-            return
-        if Value == PinDict.Input:
-            self.Group.SetLevel(self.DefinedLevel, self, [f'{self} TypeSet'])
-        elif Value == PinDict.Output:
-            self.Group.RemoveLevelSet(self)
-        else:
-            raise Exception(f"Wrong {self} type {Value}")
-        self.UpdateLocation()
-        Log(f"{self.Label} {self.CName} type set to {PinDict.PinTypeNames[self.Type]}")
-
+        return self.Symmetric
+    
     @property
     def Label(self):
         return PinLabel(self.PinLabelRule, self.Index, self.Name)
@@ -380,13 +364,14 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
     InputPinsDef = None
     OutputPinsDef = None
     Callback = None
+    UndefRun = None
     Board = None
     ForceWidth = None
     ForceHeight = None
     PinLabelRule = None
     Symbol = ''
-    def __init__(self, Location, Rotation):
-        super().__init__(Location, Rotation)
+    def __init__(self, Location, Rotation, Symmetric):
+        super().__init__(Location, Rotation, Symmetric)
         self.StoredAttribute('InputPins', [])
         self.StoredAttribute('OutputPins', [])
 
@@ -487,6 +472,8 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
 
     @property
     def InputReady(self):
+        if self.UndefRun:
+            return True
         for Level in self.Input:
             if Level >> 1:
                 return False
@@ -518,7 +505,7 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
 
     @property
     def TextLocation(self):
-        return self.Location + self.LocToSWOffset + np.array([self.Width, self.Height]) / 2
+        return self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height]) / 2, self.Rotation)
     @property
     def TextRotation(self):
         if self.Symbol:
@@ -552,17 +539,17 @@ class CasingPinC(ComponentBase):
 
         self.Start()
 
-    @cached_property
+    @property
     def PinLocStaticOffset(self):
         PinVirtualLength = 1+Params.GUI.Dimensions.CasingPinBonusLength
         if self.Side == PinDict.W:
-            return self.Parent.LocToVirtualSWOffset + np.array([-PinVirtualLength, self.Parent.VirtualHeight-self.SideIndex])
+            return self.Parent.LocToVirtualSWOffset + np.array([-PinVirtualLength, (1-self.Symmetric)*(self.Parent.VirtualHeight-self.SideIndex) + self.Symmetric*(self.SideIndex)])
         elif self.Side == PinDict.E:
-            return self.Parent.LocToVirtualSWOffset + np.array([self.Parent.VirtualWidth+PinVirtualLength, self.Parent.VirtualHeight-self.SideIndex])
+            return self.Parent.LocToVirtualSWOffset + np.array([self.Parent.VirtualWidth+PinVirtualLength, (1-self.Symmetric)*(self.Parent.VirtualHeight-self.SideIndex) + self.Symmetric*(self.SideIndex)])
         elif self.Side == PinDict.N:
-            return self.Parent.LocToVirtualSWOffset + np.array([self.SideIndex, self.Parent.VirtualHeight+PinVirtualLength])
+            return self.Parent.LocToVirtualSWOffset + np.array([self.SideIndex, (1-self.Symmetric)*(self.Parent.VirtualHeight+PinVirtualLength) + self.Symmetric*(-PinVirtualLength)])
         elif self.Side == PinDict.S:
-            return self.Parent.LocToVirtualSWOffset + np.array([self.SideIndex, -PinVirtualLength])
+            return self.Parent.LocToVirtualSWOffset + np.array([self.SideIndex, self.Symmetric*(self.Parent.VirtualHeight+PinVirtualLength) + (1-self.Symmetric)*(-PinVirtualLength)])
         else:
             raise ValueError(f"Wrong component {self.Parent.CName} definition for pin {self.Index}")
     @cached_property
@@ -618,6 +605,12 @@ class CasingPinC(ComponentBase):
         return self.Parent.Rotation
     @Rotation.setter
     def Rotation(self, Rotation):
+        pass
+    @property
+    def Symmetric(self):
+        return self.Parent.Symmetric
+    @Symmetric.setter
+    def Symmetric(self, Symmetric):
         pass
     @property
     def Label(self):
@@ -688,25 +681,17 @@ def RotateOffset(Offset, Rotation): # Use LRU ?
 
 class WireC(ComponentBase):
     CName = "Wire"
-    BuildMode = None
-    def __init__(self, Location, Rotation, WireParent=None):
-        super().__init__(Location, Rotation)
-        self.StoredAttribute('BuildMode', self.__class__.BuildMode)
+    DefaultSymmetric = Params.GUI.Behaviour.DefaultWireSymmetric
+    def __init__(self, Location, Rotation, Symmetric, WireParent=None):
+        super().__init__(Location, Rotation, Symmetric)
 
         self.Start()
         if WireParent is None:
-            self.WireChild = self.__class__(Location, Rotation, self) 
+            self.WireChild = self.__class__(Location, Rotation, Symmetric, self) 
             self.WireParent = None
         else:
             self.WireChild = None
             self.WireParent = WireParent
-
-    def Switch(self):
-        if not self.State.Building:
-            raise Exception(f"{self} switched while not building")
-        self.__class__.BuildMode = 1 - self.__class__.BuildMode
-        self.BuildMode = self.__class__.BuildMode
-        self.UpdateLocation()
 
     def PlotInit(self):
         Color, Alpha = self.Color, self.Alpha
@@ -760,7 +745,7 @@ class WireC(ComponentBase):
             return
         P1 = self.Location[0,:]
         P3 = self.WireChild.Location[1,:]
-        if self.BuildMode == 0: # Straight wires
+        if self.Symmetric: # Straight wires
             if (self.Rotation & 0b1) == 0:
                 P2 = np.array([P3[0], P1[1]])
             else:

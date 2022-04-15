@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib
 from functools import cached_property
 from Console import Log
-from Values import Colors, Params, PinDict, BoardGroupsDict
+from Values import Colors, Params, PinDict
 
 ForceReload = True
 
@@ -111,7 +111,7 @@ class SFrame:
         
     def AdvertiseChild(self, NewChild, Name):
         if hasattr(self, Name):
-            raise Exception("Frame name already taken")
+            raise Exception(f"Frame name {Name} already taken")
         if Name[:2] != self.Prefix:
             Name = self.Prefix + Name
         setattr(self, Name, NewChild)
@@ -159,7 +159,6 @@ class SFrame:
         else:
             Child.destroy()
         delattr(self, ChildName)
-        return Child
 
     def RemoveDefaultName(self):
         if hasattr(self, self.DefaultLabelName) and not self.NameDisplayed:
@@ -194,13 +193,13 @@ class BoardIOWidgetBase:
 #    ReturnCallback = None
 #    LevelModificationCallback = None
     GUI = None
-    Mask = 0b0
-    Level = 0
-    Valid = True
-    _Bits = tuple()
     Type = None
     DefaultWidgetName = "Widget"
     def __init__(self, Frame, ChildName):
+        self.Mask = 0b0
+        self.Level = 0
+        self.Valid = True
+        self._Bits = tuple()
         self.frame = Frame.frame
         if ChildName is None:
             ChildName = self.DefaultWidgetName
@@ -372,9 +371,11 @@ class SPinEntry(BoardIOWidgetBase):
         self.frame.bind('<FocusOut>', self.ResetName)
 
         Tk.Label(self.frame, text = f"Group:").grid(column = 2, row = 0)
-        self.GroupVar = Tk.StringVar(self.frame, self.Pin.BoardGroup)
-        self.GroupVar.trace_add('write', lambda *args, self=self, **kwargs: self.SetGroup(self.GroupVar.get()))
-        self.GroupMenu = Tk.OptionMenu(self.frame, self.GroupVar, *(('',) + BoardGroupsDict.Names[self.Type]))
+        self.GroupVar = Tk.StringVar(self.frame, self.Pin.BoardGroup.Name(self.Pin))
+#        self.GroupVar.trace_add('write', lambda *args, self=self, **kwargs: self.SetGroup(self.GroupVar.get()))
+        self.GroupMenu = Tk.OptionMenu(self.frame, self.GroupVar, *(('',) + PinDict.BoardGroupsNames[self.Type]), command = lambda *args, self=self, **kwargs: self.SetGroup(self.GroupVar.get()))
+#        for GroupName in ('',) + PinDict.BoardGroupsNames[self.Type]:
+#            self.GroupMenu['menu'].add_command(label=GroupName, command = lambda *args, GroupName=GroupName, self=self, **kwargs:self.SetGroup(GroupName))
         self.GroupMenu.grid(column = 2, row = 1)
 
         self.SetButton = Tk.Button(self.frame, bg = Colors.Component.Levels[self.Level], activebackground = Colors.Component.Levels[self.Level], command = self.Switch)
@@ -402,17 +403,23 @@ class SPinEntry(BoardIOWidgetBase):
     def ResetName(self, *args, **kwargs):
         if self.frame.focus_get() != None and self.NameVar.get() != self.Pin.Name:
             self.NameVar.set(self.Pin.Name)
-    def SetGroup(self, Group):
-        if self.Pin.BoardGroup == Group:
+    def SetGroup(self, BoardGroup):
+        if self.Pin.BoardGroup(self.Pin) == BoardGroup:
             return
-        self.Pin.Group = Group
-        if Group:
+        self.Pin.BoardGroup.Set(self.Pin, BoardGroup)
+        if BoardGroup:
             self.NameEntry.configure(state = Tk.DISABLED)
+            self.UpdateNameInGroup()
         else:
             self.NameEntry.configure(state = Tk.NORMAL)
-
+            self.Pin.Name = self.NameVar.get()[:Params.GUI.RightPanel.PinNameEntryWidth]
+            self.GroupVar.set('')
         self.GUI.BoardIOWidgetGroupModification()
-
+    def UpdateNameInGroup(self):
+        if not self.Pin.BoardGroup(self.Pin):
+            return
+        self.Pin.Name = self.Pin.BoardGroup.Name(self.Pin)
+        self.GroupVar.set(f"{self.Pin.BoardGroup(self.Pin)}({self.Pin.BoardGroup.Index(self.Pin)})")
     def UpdateRepresentation(self):
         if not self.Valid:
             Color = self.InvalidColor

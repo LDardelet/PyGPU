@@ -147,9 +147,9 @@ class Params:
         class Behaviour:
             AutoContinueComponent = True
             StopWireOnJoin = True
-            DefaultWireBuildMode = 1
+            DefaultWireSymmetric = 1
             DefaultWireRotation = 0
-            DefaultBoardPinBuildMode = 0
+            DefaultBoardPinSymmetric = 0
             AskDeleteConfirmation = False
             AutoSwitchBoardPins = False # Disabled for now as it cannot be changed afterwards
     class ExportGUI:
@@ -193,7 +193,6 @@ class PinDict:
                               np.array([[_l, 0],
                                         [_l-_la, -_h], 
                                         [_l-_la, _h]]))
-
-class BoardGroupsDict:
-    Names = {PinDict.Input: ('A', 'B', 'In'), 
-             PinDict.Output:('C', 'D', 'Out')}
+    BoardGroupsNames = {Input: ('A', 'B', 'In'), 
+                   Output:('C', 'D', 'Out')}
+    NoneBoardGroupName = ''

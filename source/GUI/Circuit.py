@@ -1,7 +1,7 @@
 import numpy as np
 
 import Components as ComponentsModule
-from Values import Colors, Params, Levels, PinDict, BoardGroupsDict
+from Values import Colors, Params, Levels, PinDict
 from Console import Log, LogSuccess, LogWarning, LogError
 from Storage import StorageItem, Modifies, BaseLibrary
 import DefaultLibrary
@@ -17,6 +17,7 @@ class ComponentsHandlerC(StorageItem):
         self.StoredAttribute('InputPins', tuple()) # Tuples for faster looping
         self.StoredAttribute('OutputPins', tuple())
         self.StoredAttribute('CasingGroup', CasingGroupC(self))
+        self.StoredAttribute('BoardGroupsHandler', None)
 
         self.Start()
 
@@ -211,10 +212,13 @@ class ComponentsHandlerC(StorageItem):
             Pin.Side = PinDict.E
         self.Pins.append(Pin)
         self.ReloadPinIndices()
+        if not self.BoardGroupsHandler is None:
+            self.BoardGroupsHandler.Register(Pin)
     def RemoveBoardPin(self, Pin):
-        Pin.BoardGroup.RemovePin(Pin)
         self.Pins.remove(Pin)
         self.ReloadPinIndices()
+        if not self.BoardGroupsHandler is None:
+            self.BoardGroupsHandler.Unregister(Pin)
     def SetPinIndex(self, Pin, NewIndex, Rule = 'roll'):
         if Pin.Index == NewIndex:
             return
@@ -407,12 +411,6 @@ class ComponentsHandlerC(StorageItem):
         Limits[np.where(Limits > Params.Board.Max)] -= Params.Board.Size
         return Limits
 
-class TruthTableC(StorageItem):
-    LibRef = "TruthTable"
-    def __init__(self):
-        self.StoredAttribute('Data', np.zeros(0, dtype = int))
-        self.UpToDate = False
-
 class GroupC(StorageItem):
     LibRef = "Group"
     def __init__(self, Handler, Component):
@@ -600,13 +598,6 @@ class GroupC(StorageItem):
     def Color(self):
         return Colors.Component.Levels[self.Level]
     def __repr__(self):
-        #return f"Group {self.ID} ({', '.join([Levels.Names[self.Level]] + [str(ID) for ID in sorted([Component.ID for Component in self.SetBy.keys()])])})"
-        #if len(self.SetBy) == 0:
-        #    LevelStr = f"({Levels.Names[self.Level]})"
-        #elif len(self.SetBy) == 1:
-        #    LevelStr = f"({Levels.Names[self.Level]}, {str(list(self.SetBy.keys())[0].ID)})"
-        #else:
-        #    LevelStr = '(multiple sets)'
         return f"Group {self.ID}"
     @property
     def StillUseful(self):
@@ -660,7 +651,7 @@ class BookC:
 
     def CreateComponentClass(self, CompName, CompData):
         try:
-            InputPinsDef, OutputPinsDef, Callback, Board, ForceWidth, ForceHeight, PinLabelRule, Symbol = CompData
+            InputPinsDef, OutputPinsDef, Callback, UndefRun, Board, ForceWidth, ForceHeight, PinLabelRule, Symbol = CompData
             PinIDs = set()
             for PinLocation, PinName in InputPinsDef + OutputPinsDef:
                 if PinLocation in PinIDs:
@@ -677,6 +668,7 @@ class BookC:
                         'InputPinsDef'    : InputPinsDef,
                         'OutputPinsDef'    : OutputPinsDef,
                         'Callback'   : Callback,
+                        'UndefRun'   : UndefRun,
                         'Board' : Board,
                         'ForceWidth' : ForceWidth,
                         'ForceHeight': ForceHeight,
@@ -715,4 +707,3 @@ class CLibrary:
 BaseLibrary.Advertise(GroupC)
 BaseLibrary.Advertise(CasingGroupC)
 BaseLibrary.Advertise(ComponentsHandlerC)
-BaseLibrary.Advertise(TruthTableC)

@@ -1,4 +1,5 @@
 from Components import WireC, BoardPinC, PinDict
+from Values import Levels
 
 def W(SideIndex, Name = ''):
     return ((PinDict.W, SideIndex), Name)
@@ -16,6 +17,7 @@ Definitions = {
                W(1)],
               [E(0)],
         lambda a, b: (a & b,), 
+        False,
         None, 
         None, 
         None, 
@@ -24,7 +26,8 @@ Definitions = {
     'Or' :(([W(0),
              W(1)],
             [E(0)],
-        lambda a, b: (a | b,) , 
+        lambda a, b: (a | b,) , # Need this to allow for undef run
+        False,
         None, 
         None, 
         None, 
@@ -34,6 +37,7 @@ Definitions = {
              W(1)],
             [E(0)],
         lambda a, b: (a ^ b,) , 
+        False,
         None, 
         None, 
         None, 
@@ -42,6 +46,7 @@ Definitions = {
     'Not':(([W(0, 'in')],
             [E(0, 'out')],
         lambda a   : (not a,)  , 
+        False,
         None, 
         None, 
         None, 
@@ -50,6 +55,7 @@ Definitions = {
     'High' :(([],
         [E(0)],
         lambda     : (True,)   , 
+        False,
         None, 
         None, 
         None,
@@ -58,9 +64,19 @@ Definitions = {
     'Low':(([],
         [E(0)],
         lambda     : (False,)  , 
+        False,
         None, 
         None, 
         None,
         0b00,
         '-'), 'l'),
+    'Set':(([W(0, 'in')],
+        [E(0, 'out')],
+        lambda a    : (Levels.High if a == Levels.High else Levels.Low,)  , 
+        True,
+        None, 
+        None, 
+        None,
+        0b01,
+        '='), 'q'),
 }
