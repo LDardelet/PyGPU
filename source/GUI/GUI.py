@@ -13,7 +13,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from Console import ConsoleWidget, ConsoleText, Log, LogSuccess, LogWarning, LogError
 from Values import Colors, Params, PinDict
 from Tools import Void, ModesDict, ModeC, SFrame, SEntry, SLabel, SPinEntry, BoardIOWidgetBase, BoardDisplayC
-from Circuit import CLibrary
+from Library import LibraryHanderC
 from Board import BoardC
 from Export import ExportGUI
 
@@ -46,14 +46,14 @@ class GUI:
         self.CurrentDisplay.Canvas.draw()
     def BoardState(self):
         for BoardInputWidget in self.BoardInputWidgets:
-            BoardInputWidget.Pull(self.CH.Input, self.CH.InputValid)
-        if self.CH.LiveUpdate:
+            BoardInputWidget.Pull(self.CurrentBoard.Input, self.CurrentBoard.InputValid)
+        if self.CurrentBoard.LiveUpdate:
             for BoardOutputWidget in self.BoardOutputWidgets:
-                BoardOutputWidget.Pull(self.CH.Output, self.CH.OutputValid)
+                BoardOutputWidget.Pull(self.CurrentBoard.Output, self.CurrentBoard.OutputValid)
         self.CurrentDisplay.Canvas.draw()
     def CursorInfo(self):
-        GroupsInfo = self.CH.GroupsInfo(self.Cursor)
-        self.MainFrame.Board.DisplayToolbar.Labels.CursorLabel['text'] = f"{self.Cursor.tolist()}" + bool(GroupsInfo)*": " + self.CH.GroupsInfo(self.Cursor)
+        GroupsInfo = self.CurrentBoard.GroupsInfo(self.Cursor)
+        self.MainFrame.Board.DisplayToolbar.Labels.CursorLabel['text'] = f"{self.Cursor.tolist()}" + bool(GroupsInfo)*": " + self.CurrentBoard.GroupsInfo(self.Cursor)
         if self.Highlighted is None:
             Info = ""
         else:
@@ -112,7 +112,7 @@ class GUI:
                         GroupWidget.frame.grid(row = GroupRow, column = 0)
                     else:
                         GroupFrame = WidgetParentFrame.AddFrame(GroupFrameName, row = GroupRow, column = 0, Border = True, NoName = True)
-                        GroupWidget = SWidget(GroupFrame, GroupName, GroupBits, Params.GUI.RightPanel.Width//2, True)
+                        GroupWidget = SWidget(GroupFrame, GroupName, GroupBits, Params.GUI.RightPanel.HalfWidth, True)
                         BoardWidgetSet.add(GroupWidget)
                         self.DisplayedGroupsWidgets[GroupID] = GroupWidget
                 else:
@@ -134,10 +134,11 @@ class GUI:
                 if Board in FoundBoards:
                     continue
 
-                BoardName = Board.Name
                 if not Board.Filed:
-                    BoardName = Board.Name + f'({UnfiledID})'
+                    BoardName = str(Board) + f'({UnfiledID})'
                     UnfiledID += 1
+                else:
+                    BoardName = str(Board)
                 Name = Tab*' ' + Prefix + BoardName
 
                 Boards.append((Name, Board))
@@ -150,7 +151,7 @@ class GUI:
             if Board == self.CurrentBoard:
                 self.BoardVar.set(BoardName)
 
-    def SolveUpdateRequests(self, func, Log = True):
+    def SolveUpdateRequests(self, func, Log = False):
         if Log:
             print(f"Triggered by {func.__name__}")
         for UpdateFunction in self.UpdateFunctions:
@@ -177,7 +178,7 @@ class GUI:
 
         BoardIOWidgetBase.GUI = self
         ModeC.GUI = self
-        self.Library = CLibrary()
+        self.Library = LibraryHanderC()
         self.LoadedBoards = []
         self.LoadedDisplays = []
         self.CurrentBoard = None
@@ -209,6 +210,18 @@ class GUI:
         self.Modes.Default(Message = f'Entry return by {Entry}')
 
     @Trigger
+    @Update(BoardPinsLayout, BoardState) # Boardstate will change as board input / output level might change due to pin inversion
+    def BoardIOWidgetIndexModCallback(self, Entry, NewIndexAsked):
+        if NewIndexAsked < 0 or NewIndexAsked >= len(self.CurrentBoard.Pins): # Positive continuous pin numbering
+            return
+        Levels = {Pin:Pin.Level for Pin in self.CurrentBoard.InputPins} # We dont want to change board levels while changing pins numbering, thus use pin instances as references
+        self.CurrentBoard.SetPinIndex(Entry.Pin, NewIndexAsked)
+        NewInputLevel = 0
+        for Pin in self.CurrentBoard.InputPins:
+            NewInputLevel |= Levels[Pin] << Pin.TypeIndex
+        self.CurrentBoard.Input = NewInputLevel
+
+    @Trigger
     @Update(BoardPinsLayout, BoardState)
     def BoardIOWidgetGroupModification(self):
         pass
@@ -216,7 +229,7 @@ class GUI:
     @Trigger
     @Update(BoardState)
     def BoardIOWidgetLevelModificationCallback(self, Entry): # TODO : seems to be missing a trigger, to update the GUI widgets layout upon board grouop change
-        self.CH.Input = Entry.Push(self.CH.Input)
+        self.CurrentBoard.Input = Entry.Push(self.CurrentBoard.Input)
 
     @Trigger  # TODO : merge all callback functions to OnUserAction
     def OnStaticGUIButton(self, Callback, *args, **kwargs):
@@ -237,7 +250,7 @@ class GUI:
         else:
             if Board == self.CurrentBoard:
                 return
-            print(f"Selected {Board.Name}")
+            print(f"Selected {Board}")
             self.SelectBoard(Board)
 
     # Update functions. No trigger should be within here, apart from simulation run
@@ -249,7 +262,7 @@ class GUI:
         self.TmpComponents = set()
 
     def ClearBoard(self):
-        self.CH.LiveUpdate = False # Possibly useless
+        self.CurrentBoard.LiveUpdate = False # Possibly useless
         self.CurrentDisplay.Ax.cla()
         self.PlotView()
         return True
@@ -266,19 +279,19 @@ class GUI:
         if Filename:
             Success = self.CurrentBoard.Save(Filename, Force = Force)
             if Success:
-                self.MainWindow.title(Params.GUI.Name + f" ({self.CurrentBoard.Name})")
+                self.MainWindow.title(Params.GUI.Name + f" ({self.CurrentBoard})")
             return Success
         else:
             LogWarning("Data unsaved")
 
     @Modes.Default
     def ExportBoardAsComponent(self):
-        if False and len(self.CH.InputPins) == 0 and len(self.CH.OutputPins) == 0:
+        if False and len(self.CurrentBoard.InputPins) == 0 and len(self.CurrentBoard.OutputPins) == 0:
             Log("Impossible to export a board without any IO pin")
             return
 
         Export = ExportGUI(self.MainWindow, self.CurrentBoard)
-        Export.MainWindow.wait_window()
+        Export.ExportWindow.wait_window()
         if Export.Success:
             Log("Success")
         else:
@@ -309,7 +322,7 @@ class GUI:
         if Board is None:
             Board = self.CurrentBoard
         if not Board.Saved:
-            ans = messagebox.askyesnocancel("Unsaved changes", f"Save changes to board {Board.Name} before closing?")
+            ans = messagebox.askyesnocancel("Unsaved changes", f"Save changes to board {Board} before closing?")
             if ans is None:
                 return
             if ans:
@@ -335,7 +348,7 @@ class GUI:
 
         self.ResetBoardGUIVariables()
 
-        self.MainWindow.title(Params.GUI.Name + f" ({self.CurrentBoard.Name})")
+        self.MainWindow.title(Params.GUI.Name + f" ({self.CurrentBoard})")
 
     @property
     def Cursor(self):
@@ -425,17 +438,17 @@ class GUI:
                         Component.Switch()
 
     def Set(self):
-        Joins = self.CH.HasItem(self.Cursor)
+        Joins = self.CurrentBoard.HasItem(self.Cursor)
         if self.Modes.Build:
             if len(self.TmpComponents) != 1:
                 raise Exception(f"{len(self.TmpComponents)} component(s) currently in memory for BuildMode")
             Component = self.TmpComponents.pop()
-            if self.CH.Register(Component):
+            if self.CurrentBoard.Register(Component):
                 self.ConfirmComponentRegister(Component, Joins)
             else:
                 self.TmpComponents.add(Component)
         elif self.Modes.Default:
-            if self.CH.HasItem(self.Cursor) and self.CH.FreeSlot(self.Cursor):
+            if self.CurrentBoard.HasItem(self.Cursor) and self.CurrentBoard.FreeSlot(self.Cursor):
                 self.StartComponent(self.Library.Wire)
 
     @Update(BoardPinsLayout, BoardState)
@@ -483,7 +496,7 @@ class GUI:
         if not self.Highlighted is None and not self.Highlighted.Removing:
             return self.Select()
         if not Params.GUI.Behaviour.AskDeleteConfirmation or self.AskConfirm(f"Do you confirm the deletion of {len(self.TmpComponents)} components ?"):
-            self.CH.Remove(self.TmpComponents)
+            self.CurrentBoard.Remove(self.TmpComponents)
             self.Modes.Default(Message = 'end of delete')
             self.MoveHighlight(Reset = True)
 
@@ -495,9 +508,9 @@ class GUI:
 
     @Update(CursorInfo)
     def MoveHighlight(self, Reset = False):
-        self.CanHighlight = [Group for Group in self.CH.CursorGroups(self.Cursor) if len(Group.Wires) > 1] \
-                            + self.CH.CursorComponents(self.Cursor) \
-                            + self.CH.CursorCasings(self.Cursor) # Single item groups would create dual highlight of one component
+        self.CanHighlight = [Group for Group in self.CurrentBoard.CursorGroups(self.Cursor) if len(Group.Wires) > 1] \
+                            + self.CurrentBoard.CursorComponents(self.Cursor) \
+                            + self.CurrentBoard.CursorCasings(self.Cursor) # Single item groups would create dual highlight of one component
         if not self.CanHighlight:
             self.CanHighlight = [None]
         if not (self.Highlighted in self.CanHighlight) or Reset:
@@ -515,20 +528,20 @@ class GUI:
 
     @Modes.Default
     def ToggleConnexion(self):
-        self.CH.ToggleConnexion(self.Cursor)
+        self.CurrentBoard.ToggleConnexion(self.Cursor)
         self.MoveHighlight(Reset = True)
     def CheckConnexionToggle(self):
-        if self.CH.CanToggleConnexion(self.Cursor):
+        if self.CurrentBoard.CanToggleConnexion(self.Cursor):
             self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.NORMAL)
         else:
             self.MainFrame.Board.Controls.ToggleConnexionButton.configure(state = Tk.DISABLED)
-        if self.CH.CursorConnected(self.Cursor):
+        if self.CurrentBoard.CursorConnected(self.Cursor):
             self.MainFrame.Board.Controls.ToggleConnexionButton.configure(image = self._Icons['CrossedDotImage'])
         else:
             self.MainFrame.Board.Controls.ToggleConnexionButton.configure(image = self._Icons['DotImage'])
 
     def ComputeTruthTable(self):
-        NBits = self.CH.NBitsInput
+        NBits = self.CurrentBoard.NBitsInput
         if NBits == 0:
             Log("Nothing to compute")
             return
@@ -743,10 +756,10 @@ class GUI:
         self.BoardInputWidgets =  {self.BoardInputEntry}
         self.BoardOutputWidgets = {self.BoardOutputLabel}
 
-        self.MainFrame.Right_Panel.AddFrame("Input_Groups", row = 2, column = 0, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
-        self.MainFrame.Right_Panel.AddFrame("Input_Pins", row = 3, column = 0, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
-        self.MainFrame.Right_Panel.AddFrame("Output_Groups", row = 2, column = 1, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
-        self.MainFrame.Right_Panel.AddFrame("Output_Pins", row = 3, column = 1, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.Width//2)
+        self.MainFrame.Right_Panel.AddFrame("Input_Groups", row = 2, column = 0, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.HalfWidth)
+        self.MainFrame.Right_Panel.AddFrame("Input_Pins", row = 3, column = 0, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.HalfWidth)
+        self.MainFrame.Right_Panel.AddFrame("Output_Groups", row = 2, column = 1, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.HalfWidth)
+        self.MainFrame.Right_Panel.AddFrame("Output_Pins", row = 3, column = 1, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.HalfWidth)
 
     def LoadLibraryGUI(self):
         self.CompToButtonMap = {}

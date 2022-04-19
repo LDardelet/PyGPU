@@ -5,7 +5,8 @@ from functools import cached_property
 
 from Values import Colors, Params, PinDict, Levels
 from Console import Log, LogSuccess, LogWarning, LogError
-from Storage import StorageItem, BaseLibrary
+from Storage import StorageItem
+import Library
 
 class StatesC(StorageItem):
     Names = ['Building',
@@ -370,7 +371,10 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
     ForceHeight = None
     PinLabelRule = None
     Symbol = ''
-    def __init__(self, Location, Rotation, Symmetric):
+    def __init__(self, Location, Rotation, Symmetric, Display = None):
+        if not Display is None:
+            self.Display = Display
+
         super().__init__(Location, Rotation, Symmetric)
         self.StoredAttribute('InputPins', [])
         self.StoredAttribute('OutputPins', [])
@@ -875,11 +879,3 @@ class ConnexionC(ComponentBase):
     def __repr__(self):
         return f"{self.CName} ({self.ID}) @ {self.Location}"
 
-BaseLibrary.Advertise(ConnexionC)
-BaseLibrary.Advertise(CasingPinC)
-BaseLibrary.Advertise(InputPinC)
-BaseLibrary.Advertise(OutputPinC)
-BaseLibrary.Advertise(BoardPinC)
-BaseLibrary.Advertise(StatesC)
-for State in States.States:
-    BaseLibrary.Advertise(State.__class__)

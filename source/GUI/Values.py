@@ -36,6 +36,8 @@ class Colors:
             wrongEntry = C.red
             validLabel = C.black
             wrongLabel = C.lgrey
+            wrongButton = C.red
+            validButton = C.green
         Modes = {
             0:C.white,  # Default
             1:C.white,  # Console
@@ -85,7 +87,9 @@ class Params:
             BoardMenuWidth = 40
         class RightPanel:
             Width = 60
-            PinNameEntryWidth = 5
+            HalfWidth = 28
+            PinNameEntryWidth = 8
+            PinGroupLabelWidth = 8
         class Cursor:
             Marker = 'o'
             DefaultAlpha = 1. # Unused right now

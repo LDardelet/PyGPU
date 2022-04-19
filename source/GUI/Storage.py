@@ -5,16 +5,6 @@ import re
 
 from Console import Log, LogSuccess, LogWarning
 
-class BaseLibraryC:
-    def __init__(self):
-        self.Elements = {}
-    def Advertise(self, Class):
-        self.Elements[Class.LibRef] = Class
-    def __getitem__(self, key):
-        return self.Elements[key]
-
-BaseLibrary = BaseLibraryC()
-
 class FileHandlerC:
     def __init__(self):
         self.UnpackedData = None
@@ -137,6 +127,9 @@ class StorageItem(metaclass = Meta):
             self._Saved = True
             for Key, Data in Value.items():
                 setattr(self, self.Unpack(*Key, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key), self.Unpack(*Data, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key))
+            for Key in self._SA:
+                if not hasattr(self, Key):
+                    LogWarning(f"Object {self.LibRef} ({self}) missing stored attribute {Key}")
             Log(f"Unpacked new object {self.LibRef} with ID {ID}", LogTab)
             return
         if Type in (DICT, LIST, SET, TUPLE, ARRAY):
@@ -150,10 +143,8 @@ class StorageItem(metaclass = Meta):
                 Value = IDsToDicts[ID]
                 LibRef = Value.pop((BUILDIN, 'LibRef'))[1]
                 Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking new object {ID} from LibRef {LibRef}", LogTab)
-                if '.' in LibRef:
-                    StoredItemClass = StorageItem.GeneralLibrary[LibRef]
-                else:
-                    StoredItemClass = BaseLibrary[LibRef]
+                
+                StoredItemClass = StorageItem.GeneralLibrary[LibRef]
                 StoredItemClass(UnpackData = (ID, Value, IDsToDicts, Unpacked, True, LogTab))
                 #Unpacked[ID] = StorageItem.Library[Value.pop('LibRef')[1]](UnpackData = (ID, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab))
                 #Unpacked[ID].Unpack(DICT, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab)
@@ -214,9 +205,3 @@ class EntryPoint(StorageItem):
                 return False, None
         print(StoredData.keys())
         return True, StoredData
-
-def Modifies(func):
-    def ModFunc(self, *args, **kwargs):
-        self._Saved = False
-        return func(self, *args, **kwargs)
-    return ModFunc

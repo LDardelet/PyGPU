@@ -3,8 +3,7 @@ import numpy as np
 import Components as ComponentsModule
 from Values import Colors, Params, Levels, PinDict
 from Console import Log, LogSuccess, LogWarning, LogError
-from Storage import StorageItem, Modifies, BaseLibrary
-import DefaultLibrary
+from Storage import StorageItem
 
 class ComponentsHandlerC(StorageItem):
     LibRef = "ComponentsHandler"
@@ -26,26 +25,13 @@ class ComponentsHandlerC(StorageItem):
         for Component in self.Components.values():
             self.RegisterMap(Component)
 
-        self.LiveUpdate = True
         self.Ready = True
         self.AwaitingUpdates = set()
-
-    def Building(func):
-        def Wrap(self, *args, **kwargs):
-            self.Ready = False
-            output = func(self, *args, **kwargs)
-            if self.LiveUpdate:
-                self.SolveRequests()
-            self.Ready = True
-            return output
-        return Wrap
 
     def ComputeChain(self):
         Log("Updating chain")
 
     def CallRequest(self, Component, Backtrace = None):
-        if not self.LiveUpdate:
-            return
         if Backtrace is None:
             Backtrace = []
         else:
@@ -69,8 +55,6 @@ class ComponentsHandlerC(StorageItem):
                 print(Component.Group)
                 return
 
-    @Modifies
-    @Building
     def Register(self, NewComponent):
         if not NewComponent.CanFix:
             return False
@@ -93,8 +77,6 @@ class ComponentsHandlerC(StorageItem):
         self.CallRequest(NewComponent, Backtrace = ['Register'])    
         return True
 
-    @Modifies
-    @Building
     def Remove(self, Components):
         Components = {Component for Component in Components if not isinstance(Component, ComponentsModule.ConnexionC)}
         print(f"Attempting to remove {Components}")
@@ -142,7 +124,7 @@ class ComponentsHandlerC(StorageItem):
         while Components:
             Component = Components.pop()
             Group = Component.Group
-            if not Group is None: # Happens if the component was the only one of its group, typically
+            if not Group is None: 
                 GroupComponents = {Component}.union(Components.intersection(Group.Components))
                 Components.difference_update(GroupComponents)
                 Group.Split(GroupComponents)
@@ -206,7 +188,7 @@ class ComponentsHandlerC(StorageItem):
         if Pin.Type == PinDict.Input:
             Pin.Side = PinDict.W
             Pin.TypeIndex = len(self.InputPins)
-            Pin.BoardInputSetLevel((self.Input >> Pin.TypeIndex) & 0b1, ['AddBoardPin'])
+            Pin.BoardInputSetLevel(0, ['AddBoardPin']) # Possible issue here if board level was previously set for this input pin, somehow
         else:
             Pin.TypeIndex = len(self.OutputPins)
             Pin.Side = PinDict.E
@@ -240,43 +222,6 @@ class ComponentsHandlerC(StorageItem):
         for nPin, Pin in enumerate(self.OutputPins):
             Pin.TypeIndex = nPin
 
-    @property
-    def Input(self):
-        Input = 0
-        for Pin in reversed(self.InputPins): # Use of little-endian norm
-            Input = (Input << 1) | (Pin.Level & 0b1)
-        return Input
-    @Input.setter
-    @Modifies
-    def Input(self, Input):
-        for Pin in self.InputPins:
-            Pin.BoardInputSetLevel(Input & 0b1, ['BoardInput'])
-            Input = Input >> 1
-    @property
-    def Output(self):
-        Output = 0
-        for Pin in reversed(self.OutputPins): # Use of little-endian norm
-            Output = (Output << 1) | Pin.Level
-        return Output
-    @property
-    def InputValid(self):
-        Valid = 0
-        for Pin in reversed(self.InputPins):
-            Valid = (Valid << 1) | (Pin.Valid)
-        return Valid
-    @property
-    def OutputValid(self):
-        Valid = 0
-        for Pin in reversed(self.OutputPins):
-            Valid = (Valid << 1) | (Pin.Valid)
-        return Valid
-    @property
-    def NBitsInput(self):
-        return len(self.InputPins)
-    @property
-    def NBitsOutput(self):
-        return len(self.InputPins)
-
     def CheckWireMerges(self, W1):
         for x, y in W1.AdvertisedConnexions:
             Connexion = self.Components[self.Map[x,y,-1]]
@@ -297,6 +242,8 @@ class ComponentsHandlerC(StorageItem):
                 Connexion.destroy()
                 del self.Components[W2.ID]
                 del self.Components[Connexion.ID]
+                W2.Group.RemoveComponent(W2)
+                Connexion.Group.RemoveComponent(Connexion)
 
     @staticmethod
     def Link(C1, C2):
@@ -316,8 +263,6 @@ class ComponentsHandlerC(StorageItem):
         for x, y, theta in Component.AdvertisedLocations:
             self.Map[x,y,theta] = 0
 
-    @Modifies
-    @Building
     def ToggleConnexion(self, Location):
         if self.Map[Location[0], Location[1],-1]:
             Connexion = self.Components[self.Map[Location[0], Location[1],-1]]
@@ -624,86 +569,3 @@ class CasingGroupC(StorageItem):
     def Split(self, Components):
         for Component in Components:
             self.RemoveComponent(Component)
-
-# Component template signature :
-# (InputPins, OutputPins, Callback, Board, ForceWidth, ForceHeight, PinLabelRule, Symbol)
-
-class BookC:
-    def __init__(self, Name, BookComponents = {}):
-        self.Name = Name
-        self.Components = []
-        for CompName, (CompData, ControlKey) in BookComponents.items():
-            if hasattr(self, CompName):
-                LogWarning(f"Component name {CompName} already exists in this book")
-                continue
-            self.Components.append(CompName)
-            if isinstance(CompData, type(ComponentsModule.ComponentBase)):
-                CompClass = CompData
-                CompClass.Book = self
-            else:
-                CompClass = self.CreateComponentClass(CompName, CompData)
-                if CompClass is None:
-                    continue
-            setattr(self, CompName, CompClass)
-            setattr(self, 'key_'+CompName, ControlKey)
-    def __repr__(self):
-        return self.Name
-
-    def CreateComponentClass(self, CompName, CompData):
-        try:
-            InputPinsDef, OutputPinsDef, Callback, UndefRun, Board, ForceWidth, ForceHeight, PinLabelRule, Symbol = CompData
-            PinIDs = set()
-            for PinLocation, PinName in InputPinsDef + OutputPinsDef:
-                if PinLocation in PinIDs:
-                    raise ValueError
-        except ValueError:
-            LogWarning(f"Unable to load component {CompName} from its definition")
-            return
-        return type(CompName, 
-                    (ComponentsModule.CasedComponentC, ), 
-                    {
-                        #'__init__': Components.CasedComponentC.__init__,
-                        'CName': CompName,
-                        'Book': self.Name,
-                        'InputPinsDef'    : InputPinsDef,
-                        'OutputPinsDef'    : OutputPinsDef,
-                        'Callback'   : Callback,
-                        'UndefRun'   : UndefRun,
-                        'Board' : Board,
-                        'ForceWidth' : ForceWidth,
-                        'ForceHeight': ForceHeight,
-                        'PinLabelRule':PinLabelRule,
-                        'Symbol':Symbol,
-                    })
-
-class CLibrary:
-    ComponentBase = ComponentsModule.ComponentBase # Used to transmit Ax reference
-    def __init__(self):
-        StorageItem.GeneralLibrary = self
-
-        self.Books = []
-        self.Special = {}
-        self.AddBook(BookC('Standard', DefaultLibrary.Definitions))
-        self.Wire = ComponentsModule.WireC
-
-    def AddBook(self, Book):
-        setattr(self, Book.Name, Book)
-        self.Books.append(Book.Name)
-
-    def IsWire(self, C): # Checks if class or class instance
-        return C == ComponentsModule.WireC or isinstance(C, ComponentsModule.WireC)
-    def IsBoardPin(self, C): # Checks if class or class instance
-        return C == ComponentsModule.BoardPinC or isinstance(C, ComponentsModule.BoardPinC)
-    def IsGroup(self, C):
-        return isinstance(C, GroupC)
-
-    def __getitem__(self, LibRef):
-        if '.' in LibRef:
-            BName, CName = LibRef.split('.')
-            return getattr(getattr(self, BName), CName)
-        else:
-            return self.Special[LibRef]
-
-BaseLibrary.Advertise(GroupC)
-BaseLibrary.Advertise(CasingGroupC)
-BaseLibrary.Advertise(ComponentsHandlerC)

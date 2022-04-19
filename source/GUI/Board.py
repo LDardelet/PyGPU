@@ -1,7 +1,7 @@
 import numpy as np
 
 from Circuit import ComponentsHandlerC
-from Storage import FileHandlerC, StorageItem, BaseLibrary
+from Storage import FileHandlerC, StorageItem
 
 from Values import PinDict
 from Console import Log, LogWarning, LogSuccess
@@ -10,7 +10,7 @@ class TruthTableC(StorageItem):
     LibRef = "TruthTable"
     def __init__(self):
         self.StoredAttribute('Data', np.zeros(0, dtype = int))
-        self.UpToDate = False
+        self.StoredAttribute('UpToDate', False)
 
 class BoardGroupsHandlerC(StorageItem):
     LibRef = "BoardGroupsHandlerC"
@@ -59,7 +59,8 @@ class BoardC:
     Untitled = "Untitled"
     _SavedItems = (('ComponentsHandler', ComponentsHandlerC),
                   ('TruthTable', TruthTableC),
-                  ('BoardGroupsHandler', BoardGroupsHandlerC))
+                  ('BoardGroupsHandler', BoardGroupsHandlerC),
+                  ('Name', str),)
     def __init__(self, Filename = None, Display = None, ParentBoard = None):
         self.FileHandler = FileHandlerC()
         self.Filename = Filename
@@ -67,12 +68,17 @@ class BoardC:
         self.ParentBoard = ParentBoard
         self.LoadedBoards = []
 
+        self._LiveUpdate = True
+
         self.Display = Display
         self.Display.Board = self
         if self.Filed:
             self.FileHandler.Load(self.Filename)
-            for Item, _ in self._SavedItems:
-                setattr(self, Item, self.FileHandler[Item])
+            for Item, DefaultClass in self._SavedItems:
+                try:
+                    setattr(self, Item, self.FileHandler[Item])
+                except KeyError:
+                    setattr(self, Item, DefaultClass())
         else:
             for Item, DefaultClass in self._SavedItems:
                 setattr(self, Item, DefaultClass())
@@ -87,32 +93,25 @@ class BoardC:
             LogWarning("Cannot save a board opened as a component")
             return False
         self.Filename = Filename
+        self.Name = Filename.split('/')[-1].split('.')[0]
         self.FileHandler.Save(Filename, **{Item: getattr(self, Item) for Item, _ in self._SavedItems})
         return True
 
     def ComputeTruthTable(self):
-        StoredInput = self.ComponentsHandler.Input
+        StoredInput = self.Input
 
-        N = 2**self.ComponentsHandler.NBitsInput
+        N = 2**self.NBitsInput
         Data = np.zeros(N, dtype = int)
         self.ComponentsHandler.Ready = False
         for Input in range(N):
-            self.ComponentsHandler.Input = Input
+            self.Input = Input
             self.ComponentsHandler.SolveRequests()
-            Data[Input] = self.ComponentsHandler.Output
+            Data[Input] = self.Output
         self.TruthTable.Data = Data
         Log("Done!")
-        self.ComponentsHandler.Input = StoredInput
+        self.Input = StoredInput
         self.ComponentsHandler.SolveRequests()
         self.ComponentsHandler.Ready = True
-
-    @property
-    def Name(self):
-        if self.Filed:
-            BoardName = self.Filename.split('/')[-1]
-        else:
-            BoardName = self.Untitled
-        return BoardName
 
     @property
     def Filed(self):
@@ -122,6 +121,31 @@ class BoardC:
     def Saved(self):
         return self.ComponentsHandler._Saved
 
+    @property
+    def LiveUpdate(self):
+        return self._LiveUpdate
+    @LiveUpdate.setter
+    def LiveUpdate(self, value):
+        self._LiveUpdate = value
+        if self._LiveUpdate:
+            self.ComponentsHandler.SolveRequests()
+    def Building(func):
+        def WrapBuild(self, *args, **kwargs):
+            self.ComponentsHandler.Ready = False
+            self.ComponentsHandler._Saved = False
+            output = func(self, *args, **kwargs)
+            if self.LiveUpdate:
+                self.ComponentsHandler.SolveRequests()
+            self.ComponentsHandler.Ready = True
+            return output
+        return WrapBuild
+
+    @property
+    def NBitsInput(self):
+        return len(self.ComponentsHandler.InputPins)
+    @property
+    def NBitsOutput(self):
+        return len(self.ComponentsHandler.OutputPins)
     @property
     def Pins(self):
         return self.ComponentsHandler.Pins
@@ -140,6 +164,69 @@ class BoardC:
     @property
     def OutputGroups(self):
         return self.BoardGroupsHandler.OutputGroups
+    @property
+    def Input(self):
+        Input = 0
+        for Pin in reversed(self.ComponentsHandler.InputPins): # Use of little-endian norm
+            Input = (Input << 1) | (Pin.Level & 0b1)
+        return Input
+    @Input.setter
+    def Input(self, Input):
+        self.ComponentsHandler._Saved = False
+        for Pin in self.ComponentsHandler.InputPins:
+            Pin.BoardInputSetLevel(Input & 0b1, ['BoardInput'])
+            Input = Input >> 1
+    @property
+    def Output(self):
+        Output = 0
+        for Pin in reversed(self.ComponentsHandler.OutputPins): # Use of little-endian norm
+            Output = (Output << 1) | Pin.Level
+        return Output
+    @property
+    def InputValid(self):
+        Valid = 0
+        for Pin in reversed(self.InputPins):
+            Valid = (Valid << 1) | (Pin.Valid)
+        return Valid
+    @property
+    def OutputValid(self):
+        Valid = 0
+        for Pin in reversed(self.OutputPins):
+            Valid = (Valid << 1) | (Pin.Valid)
+        return Valid
 
-BaseLibrary.Advertise(TruthTableC)
-BaseLibrary.Advertise(BoardGroupsHandlerC)
+    # Transfered public ComponentsHandler methods:
+    @Building
+    def Register(self, *args, **kwargs):
+        return self.ComponentsHandler.Register(*args, **kwargs)
+    @Building
+    def Remove(self, *args, **kwargs):
+        return self.ComponentsHandler.Remove(*args, **kwargs)
+    @Building
+    def ToggleConnexion(self, *args, **kwargs):
+        return self.ComponentsHandler.ToggleConnexion(*args, **kwargs)
+    def SetPinIndex(self, *args, **kwargs):
+        return self.ComponentsHandler.SetPinIndex(*args, **kwargs)
+    def HasItem(self, *args, **kwargs):
+        return self.ComponentsHandler.HasItem(*args, **kwargs)
+    def FreeSlot(self, *args, **kwargs):
+        return self.ComponentsHandler.FreeSlot(*args, **kwargs)
+    def GroupsInfo(self, *args, **kwargs):
+        return self.ComponentsHandler.GroupsInfo(*args, **kwargs)
+    def CursorGroups(self, *args, **kwargs):
+        return self.ComponentsHandler.CursorGroups(*args, **kwargs)
+    def CursorComponents(self, *args, **kwargs):
+        return self.ComponentsHandler.CursorComponents(*args, **kwargs)
+    def CursorCasings(self, *args, **kwargs):
+        return self.ComponentsHandler.CursorCasings(*args, **kwargs)
+    def CursorConnected(self, *args, **kwargs):
+        return self.ComponentsHandler.CursorConnected(*args, **kwargs)
+    def CanToggleConnexion(self, *args, **kwargs):
+        return self.ComponentsHandler.CanToggleConnexion(*args, **kwargs)
+    
+
+    def __repr__(self):
+        if self.Filed:
+            return self.Name
+        else:
+            return self.Untitled

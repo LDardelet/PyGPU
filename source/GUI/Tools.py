@@ -370,7 +370,7 @@ class SPinEntry(BoardIOWidgetBase):
         self.NameEntry.bind("<Return>", self.SetName)
         self.frame.bind('<FocusOut>', self.ResetName)
 
-        Tk.Label(self.frame, text = f"Group:").grid(column = 2, row = 0)
+        Tk.Label(self.frame, text = f"Group:", width = Params.GUI.RightPanel.PinGroupLabelWidth).grid(column = 2, row = 0)
         self.GroupVar = Tk.StringVar(self.frame, self.Pin.BoardGroup.Name(self.Pin))
 #        self.GroupVar.trace_add('write', lambda *args, self=self, **kwargs: self.SetGroup(self.GroupVar.get()))
         self.GroupMenu = Tk.OptionMenu(self.frame, self.GroupVar, *(('',) + PinDict.BoardGroupsNames[self.Type]), command = lambda *args, self=self, **kwargs: self.SetGroup(self.GroupVar.get()))
@@ -390,6 +390,11 @@ class SPinEntry(BoardIOWidgetBase):
 
         self.Bits = (Pin.TypeIndex,)
 
+        self.IndexDecButton = Tk.Button(self.frame, text = "^", command = lambda *args, **kwargs:self.SetIndex(-1))
+        self.IndexDecButton.grid(column = 4, row = 0)
+        self.IndexIncButton = Tk.Button(self.frame, text = "v", command = lambda *args, **kwargs:self.SetIndex(+1))
+        self.IndexIncButton.grid(column = 4, row = 1)
+
     def OnBitsChange(self):
         self.IndexLabel.configure(text = f"Pin {self.Pin.Index}")
 
@@ -397,6 +402,8 @@ class SPinEntry(BoardIOWidgetBase):
         self.Level = 1 - self.Level
         self.GUI.BoardIOWidgetLevelModificationCallback(self)
 
+    def SetIndex(self, mod):
+        self.GUI.BoardIOWidgetIndexModCallback(self, self.Pin.Index + mod) 
     def SetName(self, *args, **kwargs):
         self.Pin.Name = self.NameVar.get()[:Params.GUI.RightPanel.PinNameEntryWidth]
         self.GUI.BoardIOWidgetReturnCallback(self)
