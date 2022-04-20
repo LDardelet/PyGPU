@@ -7,13 +7,13 @@ import sys
 import numpy as np
 
 import matplotlib
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 
+from utils import Void
 from Console import ConsoleWidget, ConsoleText, Log, LogSuccess, LogWarning, LogError
 from Values import Colors, Params, PinDict
-from Tools import Void, ModesDict, ModeC, SFrame, SEntry, SLabel, SPinEntry, BoardIOWidgetBase, BoardDisplayC
-from Library import LibraryHanderC
+from GUITools import ModesDict, ModeC, SFrame, SEntry, SLabel, SPinEntry, BoardIOWidgetBase, BoardDisplayC
+from Library import LibraryHandlerC
 from Board import BoardC
 from Export import ExportGUI
 
@@ -178,7 +178,7 @@ class GUI:
 
         BoardIOWidgetBase.GUI = self
         ModeC.GUI = self
-        self.Library = LibraryHanderC()
+        self.Library = LibraryHandlerC()
         self.LoadedBoards = []
         self.LoadedDisplays = []
         self.CurrentBoard = None
@@ -290,9 +290,9 @@ class GUI:
             Log("Impossible to export a board without any IO pin")
             return
 
-        Export = ExportGUI(self.MainWindow, self.CurrentBoard)
-        Export.ExportWindow.wait_window()
-        if Export.Success:
+        self.Export = ExportGUI(self.MainWindow, self.CurrentBoard)
+        self.Export.ExportWindow.wait_window()
+        if self.Export.Success:
             Log("Success")
         else:
             LogWarning("Component export failed")
@@ -546,8 +546,7 @@ class GUI:
             Log("Nothing to compute")
             return
         if NBits > Params.GUI.TruthTable.WarningLimitNBits:
-            ans = messagebox.askokcancel("Large input", f"Computing truth table for {NBits} bits ({2**NBits} possibilities) ?")
-            if not ans:
+            if not messagebox.askokcancel("Large input", f"Computing truth table for {NBits} bits ({2**NBits} possibilities) ?"):
                 return
         self.CurrentBoard.ComputeTruthTable()
 

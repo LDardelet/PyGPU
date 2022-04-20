@@ -371,10 +371,7 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
     ForceHeight = None
     PinLabelRule = None
     Symbol = ''
-    def __init__(self, Location, Rotation, Symmetric, Display = None):
-        if not Display is None:
-            self.Display = Display
-
+    def __init__(self, Location, Rotation, Symmetric):
         super().__init__(Location, Rotation, Symmetric)
         self.StoredAttribute('InputPins', [])
         self.StoredAttribute('OutputPins', [])
@@ -388,6 +385,9 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
             else:
                 PinsList = self.OutputPins
                 PinClass = OutputPinC
+            if PinClass.Display != self.Display: # Transmission of display
+                PinClass = type("", (PinClass, ), {})
+                PinClass.Display = self.Display
             Pin = PinClass(self, Side, SideIndex, nPin, Name)
             self.Children.add(Pin)
             PinsList.append(Pin)
@@ -518,13 +518,19 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
 
     @property
     def CasingSides(self):
-        x,y = self.Location + RotateOffset(self.LocToSWOffset, self.Rotation)
-        X,Y = self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height]), self.Rotation)
+        x,y = self.SWCorner
+        X,Y = self.NECorner
         return (((x,x), (y,Y)), # West
                 ((x,X), (Y,Y)), # North
                 ((X,X), (Y,y)), # East
                 ((X,x), (y,y))) # South
 
+    @property
+    def SWCorner(self):
+        return self.Location + RotateOffset(self.LocToSWOffset, self.Rotation)
+    @property
+    def NECorner(self):
+        return self.Location + RotateOffset(self.LocToSWOffset + np.array([self.Width, self.Height]), self.Rotation)
     @property
     def AdvertisedLocations(self):
         return np.zeros((0,3), dtype = int)

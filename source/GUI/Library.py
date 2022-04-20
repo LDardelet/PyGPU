@@ -5,7 +5,7 @@ import re
 import Components as ComponentsModule
 import Circuit as CircuitModule
 import Board as BoardModule
-from Storage import StorageItem
+from Storage import StorageItem, FileSavedEntityC
 
 from Values import Params
 import DefaultLibrary
@@ -33,7 +33,7 @@ BaseLibrary.Advertise(CircuitModule.ComponentsHandlerC)
 BaseLibrary.Advertise(BoardModule.TruthTableC)
 BaseLibrary.Advertise(BoardModule.BoardGroupsHandlerC)
 
-class LibraryC:
+class LibraryC(FileSavedEntityC):
     _extension = '.lbr'
     Folder = Params.GUI.DataAbsPath + Params.GUI.DataSubFolders['Libraries']
     @classmethod
@@ -58,11 +58,15 @@ class LibraryC:
     def __init__(self, LibName):
         self.Filename = self.NameToFile(LibName)
         with open(self.Folder + self.Filename, 'rb') as f:
-            D = pickle.load(f)
-        self.Name = D['name']
+            self.Data = pickle.load(f)
+        self.Name = self.Data['name']
         self.Components = D['components']
+    def Save(self):
+        pass
+    def AddComponent(self, ComponentDict):
+        pass
 
-class LibraryHanderC:
+class LibraryHandlerC:
     ComponentBase = ComponentsModule.ComponentBase # Used to transmit Ax reference
     def __init__(self):
         StorageItem.GeneralLibrary = self

@@ -158,8 +158,16 @@ class Params:
             AutoSwitchBoardPins = False # Disabled for now as it cannot be changed afterwards
     class ExportGUI:
         Name = "Export component"
+        class View:
+            FigSize = (3.,3.)
+            FigRatio = None
+            DPI = 100
+
+            DefaultMargin = 5
+            RefLineEvery = 20
 
 Params.GUI.View.FigRatio = Params.GUI.View.FigSize[1] / Params.GUI.View.FigSize[0]
+Params.ExportGUI.View.FigRatio = Params.ExportGUI.View.FigSize[1] / Params.ExportGUI.View.FigSize[0]
 Params.Board.Size = Params.Board.Size - (Params.Board.Size & 1)
 Params.Board.Max = Params.Board.Size // 2
 Params.GUI.DataAbsPath = os.path.realpath(os.path.expanduser(Params.GUI.DataFolder)) + '/'
@@ -176,7 +184,8 @@ _la = Params.GUI.Dimensions.CasingPinArrowLength
 _h = Params.GUI.Dimensions.CasingPinArrowHeight/2
 
 class PinDict:
-    W,E,N,S = 'WENS'
+    WENS = 'WENS'
+    W,E,N,S = WENS
     Input = 0
     Output = 1
     PinTypeNames = {0:'Input',

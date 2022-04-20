@@ -1,7 +1,7 @@
 import numpy as np
 
 from Circuit import ComponentsHandlerC
-from Storage import FileHandlerC, StorageItem
+from Storage import FileSavedEntityC, StorageItem
 
 from Values import PinDict
 from Console import Log, LogWarning, LogSuccess
@@ -55,14 +55,14 @@ class BoardGroupsHandlerC(StorageItem):
             return ''
         return f"{self.Pins[Pin][0]}{self.Index(Pin)}"
 
-class BoardC:
+class BoardC(FileSavedEntityC):
     Untitled = "Untitled"
-    _SavedItems = (('ComponentsHandler', ComponentsHandlerC),
-                  ('TruthTable', TruthTableC),
-                  ('BoardGroupsHandler', BoardGroupsHandlerC),
-                  ('Name', str),)
     def __init__(self, Filename = None, Display = None, ParentBoard = None):
-        self.FileHandler = FileHandlerC()
+        self.StoredAttribute('ComponentsHandler', ComponentsHandlerC())
+        self.StoredAttribute('TruthTable', TruthTableC())
+        self.StoredAttribute('BoardGroupsHandler', BoardGroupsHandlerC())
+        self.StoredAttribute('Name', '')
+
         self.Filename = Filename
 
         self.ParentBoard = ParentBoard
@@ -73,18 +73,12 @@ class BoardC:
         self.Display = Display
         self.Display.Board = self
         if self.Filed:
-            self.FileHandler.Load(self.Filename)
-            for Item, DefaultClass in self._SavedItems:
-                try:
-                    setattr(self, Item, self.FileHandler[Item])
-                except KeyError:
-                    setattr(self, Item, DefaultClass())
-        else:
-            for Item, DefaultClass in self._SavedItems:
-                setattr(self, Item, DefaultClass())
+            FileSavedEntityC.Load(self)
         
         self.ComponentsHandler.BoardGroupsHandler = self.BoardGroupsHandler
         self.Display.SetView()
+
+        self.FSE = FileSavedEntityC
 
     def Save(self, Filename, Force = False):
         if self.Saved and not Force:
@@ -94,8 +88,12 @@ class BoardC:
             return False
         self.Filename = Filename
         self.Name = Filename.split('/')[-1].split('.')[0]
-        self.FileHandler.Save(Filename, **{Item: getattr(self, Item) for Item, _ in self._SavedItems})
+
+        FileSavedEntityC.Save(self)
         return True
+
+    def Run(self, Input):
+        pass
 
     def ComputeTruthTable(self):
         StoredInput = self.Input

@@ -8,9 +8,6 @@ from Values import Colors, Params, PinDict
 
 ForceReload = True
 
-def Void(*args, **kwargs):
-    pass
-
 class ModeC:
     GUI = None
     Current = None

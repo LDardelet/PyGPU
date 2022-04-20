@@ -14,11 +14,11 @@ class FileHandlerC:
         if Success:
             LogSuccess("Data loaded")
 
-    def Save(self, Filename, **kwargs):
+    def Save(self, EntryPoint):
         if Filename is None:
             raise FileNotFoundError("Must specify a filename to save data")
 
-        if EntryPoint(**kwargs).Save(Filename):
+        if EntryPoint.Save(Filename):
             LogSuccess("Data saved")
 
     def __getitem__(self, key):
@@ -51,11 +51,15 @@ class StorageItem(metaclass = Meta):
         # If we reach this point, it means that no loaded data was found in kwargs. We start by initializing the element as a StorageItem, and fall back to the regular behaviour
         if hasattr(self, '_SA'): # Stops any infinite loop for all non-overloaded __init__ inherited classes
             return
+        print("Starting _SA", self.__class__)
         self._SA = {'_SA', 'LibRef', '_StoreTmpAttributes'}
         self._Saved = True
         if self._StoreTmpAttributes:
             self.StoredAttribute('_TA', {})
-        self.__init__(*args, **kwargs) # Start method if left to be called when necessary in the __init__
+        if isinstance(self, FileSavedEntityC):
+            print("Starting entry point")
+            FileSavedEntityC.__init__(self)
+        self.__init__(*args, **kwargs) # Start method can be called when necessary in the __init__
 
     def StoredAttribute(self, attr, defaultValue):
         self._SA.add(attr)
@@ -125,14 +129,23 @@ class StorageItem(metaclass = Meta):
             ID = Type
             Unpacked[ID] = self
             self._Saved = True
+            if isinstance(self, FileSavedEntityC):
+                DefaultValues = {SA:getattr(self, SA) for SA in self._SA}
+                print("Default values :",  DefaultValues.keys())
+            else:
+                DefaultValues = {}
             for Key, Data in Value.items():
                 setattr(self, self.Unpack(*Key, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key), self.Unpack(*Data, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key))
             for Key in self._SA:
                 if not hasattr(self, Key):
                     LogWarning(f"Object {self.LibRef} ({self}) missing stored attribute {Key}")
+            for Key, Value in DefaultValues.items():
+                if not hasattr(self, Key):
+                    setattr(self, Key, Value)
+                    print(f"Restaured default value for {Key}")
             Log(f"Unpacked new object {self.LibRef} with ID {ID}", LogTab)
             return
-        if Type in (DICT, LIST, SET, TUPLE, ARRAY):
+        if Type in (DICT, LIST, SET, TUPLE, ARRAY) and False:
             Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking {len(Value)}-items iterable", LogTab)
         if Type == REFERENCE:
             ID = Value
@@ -159,7 +172,6 @@ class StorageItem(metaclass = Meta):
         elif Type == SET:
             return set([self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+IterableTab) for VValue in Value])
         elif Type == ARRAY:
-            #return np.array([self.Unpack(*VValue, IDsToDicts, Unpacked, LogTab+1) for VValue in Value])
             return Value
         elif Type == BUILDIN:
             #Log(bool(KeyName)*f"{KeyName}: " + f"Unpacked {type(Value)} value {Value}", LogTab)
@@ -167,41 +179,46 @@ class StorageItem(metaclass = Meta):
         else:
             raise ValueError(bool(Key)*f"{Key}: " + f"Type {Type} saved for value {Value}")
 
-def Log(data, LogTab = 0, Tab = 2):
-    print(LogTab*Tab*' '+data)
-
-class EntryPoint(StorageItem):
-    LibRef = "EntryPoint"
-    def __init__(self, **kwargs):
-        for Key, Value in kwargs.items():
-            setattr(self, Key, Value)
-            self._SA.add(Key)
-    def Save(self, Filename):
+class FileSavedEntityC(StorageItem):
+    LibRef = "FSE"
+    def __init__(self):
+        self.StoredAttribute('Filename', None)
+    def Save(self):
         Objects = {}
         D = self.Pack(None, Objects, {None:0}, NewItem = True)
         D['_obj'] = Objects
         Saved = False
-        with open(Filename, 'wb') as f:
+        with open(self.Filename, 'wb') as f:
             f.write(pickle.dumps(D))
             Saved = True
             for Item in self._SA:
                 if isinstance(Item, StorageItem):
                     Item.Saved = True
         return Saved
-    def Load(self, Filename):
-        with open(Filename, 'rb') as f:
-            D = pickle.load(f)
+    def Load(self):
+        with open(self.Filename, 'rb') as f:
+            self._RawData = pickle.load(f)
         print("Start loading data")
-        IDsToDicts = D.pop('_obj')
+        Base = dict(self._RawData)
+        IDsToDicts = Base.pop('_obj')
         Unpacked = {}
         
-        StoredData = self.Unpack(DICT, D, IDsToDicts, Unpacked, NewItem = False)
+        StoredData = self.Unpack(DICT, Base, IDsToDicts, Unpacked, NewItem = False)
         for ID, Object in Unpacked.items():
-            print(f"Starting object {ID}: {Object}")
+            #print(f"Starting object {ID}: {Object}")
             try:
                 Object.Start()
             except:
-                print("   Failed")
-                return False, None
-        print(StoredData.keys())
-        return True, StoredData
+                print(" - Failed start of {Object}")
+                return False
+        for Item in self._SA:
+            try:
+                setattr(self, Item, StoredData.pop(Item))
+            except KeyError:
+                print(f"Leaving default value for {Item}")
+        if StoredData:
+            print("Non recovered items:\n - "+'\n - '.join([str(Key) for Key in StoredData.keys()]))
+        return True
+
+def Log(data, LogTab = 0, Tab = 2):
+    print(LogTab*Tab*' '+data)
