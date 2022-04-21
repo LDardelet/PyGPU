@@ -39,15 +39,12 @@ class LibraryC(FileSavedEntityC):
     @classmethod
     def NameToFile(cls, LibName):
         LibName = re.sub(r'\W+', '', LibName)
-        return re.sub(r'\W+', '', LibName).lower() + cls._extension
+        return cls.Folder + re.sub(r'\W+', '', LibName).lower() + cls._extension
     @classmethod
     def New(cls, LibName):
         if LibName in cls.List():
             raise Exception("Library name already taken")
-        Filename = cls.NameToFile(LibName)
-        with open(cls.Folder + Filename, 'wb') as f:
-            f.write(pickle.dumps({'name':LibName, 'components':set()}))
-        return cls(LibName)
+        return cls(LibName, New = True)
     @classmethod
     def List(cls):
         Libraries = []
@@ -55,16 +52,21 @@ class LibraryC(FileSavedEntityC):
             with open(cls.Folder + Filename, 'rb') as f:
                 Libraries.append(pickle.load(f)['name'])
         return sorted(Libraries)
-    def __init__(self, LibName):
+    def __init__(self, LibName, New = False):
+        self.StoredAttribute('Name', LibName)
+        self.StoredAttribute('Components', {})
         self.Filename = self.NameToFile(LibName)
-        with open(self.Folder + self.Filename, 'rb') as f:
-            self.Data = pickle.load(f)
-        self.Name = self.Data['name']
-        self.Components = D['components']
-    def Save(self):
-        pass
+
+        if not New:
+            FileSavedEntityC.Load(self)
     def AddComponent(self, ComponentDict):
-        pass
+        self.Components[ComponentDict['CName']] = ComponentDict
+        FileSavedEntityC.Save(self)
+        print(f"Added {ComponentDict['CName']} to {self}")
+    def __contains__(self, CName):
+        return CName in self.Components
+    def __repr__(self):
+        return f"{self.Name} library"
 
 class LibraryHandlerC:
     ComponentBase = ComponentsModule.ComponentBase # Used to transmit Ax reference

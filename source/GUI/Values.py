@@ -73,7 +73,8 @@ class Params:
         DataAbsPath = None
         class Library:
             Columns = 2
-            ComponentHeight = 2
+            ComponentHeight = 1
+            ComponentWidth = 10
         class View:
             FigSize = (7.,6.)
             FigRatio = None

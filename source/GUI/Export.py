@@ -30,7 +30,7 @@ class ExportGUI:
 
         self.ExportWindow = Tk.Toplevel(master)
         self.LoadGUI()
-#        self.ExportWindow.bind('<FocusOut>', self.OnClose)
+        self.ExportWindow.bind('<FocusOut>', self.OnClose)
         self.ExportWindow.bind('<Escape>', self.OnClose)
 
         self.LoadComponent(Board)
@@ -89,8 +89,8 @@ class ExportGUI:
         self.Display = ComponentDisplayC(self.MainFrame.View.frame)
         self.Display.Widget.grid(row = 0, column = 0)
 
-        self.MainFrame.Export.AddWidget(Tk.Button, text = "Export", command = self.Export, width = 20, height = 20, color = Colors.GUI.validButton)
-        self.MainFrame.Export.AddWidget(Tk.Button, text = "Cancel", command = self.OnClose, width = 20, height = 20, color = Colors.GUI.validButton)
+        self.MainFrame.Export.AddWidget(Tk.Button, text = "Export", command = self.Export, width = 20, height = 6, background = Colors.GUI.Widget.validButton)
+        self.MainFrame.Export.AddWidget(Tk.Button, text = "Cancel", command = self.OnClose, width = 20, height = 6, background = Colors.GUI.Widget.wrongButton)
 
     def LoadComponent(self, Board):
         self.Board = Board
@@ -237,10 +237,14 @@ class ExportGUI:
             Warnings.append("Missing truth table")
         if not self.ComponentDict['Symbol']:
             Warnings.append("Missing symbol")
+        if self.ComponentDict['CName'] in self.Library:
+            Warnings.append("Component name already taken")
         if Warnings:
-            if not messagebox.askokcancel("Warnings", f"Some informations seem to be missing:\n"+'\n - '.join(Warnings)):
+            if not messagebox.askokcancel("Warnings", '\n - '.join(["Some informations seem to be missing:"]+Warnings)):
                 return
         self.Library.AddComponent(self.ComponentDict)
+        self.Success = True
+        self.OnClose()
 
     def OnClose(self, *args, **kwargs):
         self.ExportWindow.destroy()

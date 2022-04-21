@@ -165,7 +165,7 @@ class SFrame:
     def AddWidget(self, WidgetClass, Name = "", row=None, column=None, Sticky = True, **kwargs):
         self.RemoveDefaultName()
 
-        if WidgetClass == Tk.Button:
+        if WidgetClass == Tk.Button and 'background' not in kwargs:
             kwargs['background'] = Colors.GUI.Widget.default
         NewWidget = WidgetClass(self.frame, **kwargs)
         if Name:

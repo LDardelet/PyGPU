@@ -5,25 +5,6 @@ import re
 
 from Console import Log, LogSuccess, LogWarning
 
-class FileHandlerC:
-    def __init__(self):
-        self.UnpackedData = None
-    
-    def Load(self, Filename): # Only loads data from file to memory
-        Success, self.UnpackedData = EntryPoint().Load(Filename)
-        if Success:
-            LogSuccess("Data loaded")
-
-    def Save(self, EntryPoint):
-        if Filename is None:
-            raise FileNotFoundError("Must specify a filename to save data")
-
-        if EntryPoint.Save(Filename):
-            LogSuccess("Data saved")
-
-    def __getitem__(self, key):
-        return self.UnpackedData[key]
-
 BUILDIN = 1
 ARRAY = 2
 SET = 3
@@ -41,6 +22,9 @@ class Meta(type):
             self.Unpack(*kwargs['UnpackData'])
         else:
             StorageItem.__init__(self, *args, **kwargs)
+            if isinstance(self, FileSavedEntityC):
+                FileSavedEntityC.__init__(self, *args, **kwargs)
+            self.__init__(*args, **kwargs) # Start method can be called when necessary in the __init__
         return self
 
 class StorageItem(metaclass = Meta):
@@ -56,10 +40,6 @@ class StorageItem(metaclass = Meta):
         self._Saved = True
         if self._StoreTmpAttributes:
             self.StoredAttribute('_TA', {})
-        if isinstance(self, FileSavedEntityC):
-            print("Starting entry point")
-            FileSavedEntityC.__init__(self)
-        self.__init__(*args, **kwargs) # Start method can be called when necessary in the __init__
 
     def StoredAttribute(self, attr, defaultValue):
         self._SA.add(attr)
@@ -181,7 +161,7 @@ class StorageItem(metaclass = Meta):
 
 class FileSavedEntityC(StorageItem):
     LibRef = "FSE"
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         self.StoredAttribute('Filename', None)
     def Save(self):
         Objects = {}

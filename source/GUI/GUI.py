@@ -640,7 +640,8 @@ class GUI:
 
         EMenu = Tk.Menu(MainMenu, tearoff=0)
         AddCommand(EMenu, "Undo", self.Undo)
-        AddCommand(EMenu, "Undo", self.Options)
+        AddCommand(EMenu, "Manage libraries", self.ManageLibraries)
+        AddCommand(EMenu, "Options", self.Options)
         MainMenu.add_cascade(label="Edit", menu=EMenu)
 
         HMenu = Tk.Menu(MainMenu, tearoff=0)
@@ -656,6 +657,7 @@ class GUI:
         raise NotImplementedError
     def About(self):
         raise NotImplementedError
+    def ManageLibraries(self):
 
     def LoadConsole(self):
         ConsoleInstance = ConsoleWidget(self.MainFrame.Console.frame, locals(), self.MainWindow.destroy)
@@ -776,7 +778,9 @@ class GUI:
                 if ControlKey:
                     Add = f' ({ControlKey})'
                     self.AddControlKey(ControlKey, lambda key, mod, CompClass = CompClass: self.StartComponent(CompClass))
-                self.CompToButtonMap[CompClass] = CompFrame.AddWidget(Tk.Button, f"{BookName}.{CompName}", row = row, column = column, text = CompName+Add, height = Params.GUI.Library.ComponentHeight, 
+                self.CompToButtonMap[CompClass] = CompFrame.AddWidget(Tk.Button, f"{BookName}.{CompName}", row = row, column = column, text = CompName+Add, 
+                                                                        height = Params.GUI.Library.ComponentHeight, 
+                                                                        width = Params.GUI.Library.ComponentWidth,
                                                                         command = lambda CompClass = CompClass: self.OnComponentButtonClick(CompClass))
 
     def SetLibraryButtonColor(self, Button):

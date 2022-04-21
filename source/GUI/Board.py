@@ -106,6 +106,7 @@ class BoardC(FileSavedEntityC):
             self.ComponentsHandler.SolveRequests()
             Data[Input] = self.Output
         self.TruthTable.Data = Data
+        self.TruthTable.UpToDate = True
         Log("Done!")
         self.Input = StoredInput
         self.ComponentsHandler.SolveRequests()
@@ -131,6 +132,7 @@ class BoardC(FileSavedEntityC):
         def WrapBuild(self, *args, **kwargs):
             self.ComponentsHandler.Ready = False
             self.ComponentsHandler._Saved = False
+            self.TruthTable.UpToDate = False
             output = func(self, *args, **kwargs)
             if self.LiveUpdate:
                 self.ComponentsHandler.SolveRequests()
