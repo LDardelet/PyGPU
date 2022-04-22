@@ -56,7 +56,9 @@ class BoardGroupsHandlerC(StorageItem):
         return f"{self.Pins[Pin][0]}{self.Index(Pin)}"
 
 class BoardC(FileSavedEntityC):
+    LibRef = "BoardC"
     Untitled = "Untitled"
+    Display = None
     def __init__(self, Filename = None, Display = None, ParentBoard = None):
         self.StoredAttribute('ComponentsHandler', ComponentsHandlerC())
         self.StoredAttribute('TruthTable', TruthTableC())
@@ -78,7 +80,9 @@ class BoardC(FileSavedEntityC):
         self.ComponentsHandler.BoardGroupsHandler = self.BoardGroupsHandler
         self.Display.SetView()
 
-        self.FSE = FileSavedEntityC
+    @property
+    def Displayed(self):
+        return self.Display is None
 
     def Save(self, Filename, Force = False):
         if self.Saved and not Force:
@@ -89,11 +93,15 @@ class BoardC(FileSavedEntityC):
         self.Filename = Filename
         self.Name = Filename.split('/')[-1].split('.')[0]
 
-        FileSavedEntityC.Save(self)
-        return True
+        return FileSavedEntityC.Save(self)
 
     def Run(self, Input):
-        pass
+        if self.TruthTable.UpToDate and not self.Displayed:
+            return self.TruthTable.Evaluate(Input)
+        else:
+            self.Input = Input
+            self.ComponentsHandler.SolveRequests()
+            return self.Output
 
     def ComputeTruthTable(self):
         StoredInput = self.Input
@@ -180,7 +188,7 @@ class BoardC(FileSavedEntityC):
     def Output(self):
         Output = 0
         for Pin in reversed(self.ComponentsHandler.OutputPins): # Use of little-endian norm
-            Output = (Output << 1) | Pin.Level
+            Output = (Output << 1) | (Pin.Level & 0b1)
         return Output
     @property
     def InputValid(self):

@@ -30,28 +30,33 @@ class Meta(type):
 class StorageItem(metaclass = Meta):
     GeneralLibrary = None
     LibRef = None
+    _StorageLog = False
     _StoreTmpAttributes = False
     def __init__(self, *args, **kwargs):
         # If we reach this point, it means that no loaded data was found in kwargs. We start by initializing the element as a StorageItem, and fall back to the regular behaviour
         if hasattr(self, '_SA'): # Stops any infinite loop for all non-overloaded __init__ inherited classes
             return
-        print("Starting _SA", self.__class__)
+        self.Log("Starting _SA", self.__class__)
         self._SA = {'_SA', 'LibRef', '_StoreTmpAttributes'}
         self._Saved = True
         if self._StoreTmpAttributes:
             self.StoredAttribute('_TA', {})
 
+    def Log(self, *args, **kwargs):
+        if not self._StorageLog:
+            return
+        Log(*args, **kwargs)
     def StoredAttribute(self, attr, defaultValue):
         self._SA.add(attr)
         if hasattr(self, attr) and not hasattr(self.__class__, attr):
-            print(f"Weird : attribute {attr} already set while loading")
+            LogWarning(f"Weird : attribute {attr} already set while loading")
         setattr(self, attr, defaultValue)
     def TmpAttribute(self, attr, defaultValue):
         if not self._StoreTmpAttributes:
             raise Exception("Storing of temporary attributes is disabled")
         self._TA[attr] = type(defaultValue)(defaultValue) # Dereferenciation to ensure default value is saved
         if hasattr(self, attr):
-            print(f"Weird : temporary attribute {attr} already set")
+            LogWarning(f"Weird : temporary attribute {attr} already set")
         setattr(self, attr, defaultValue)
 
     def Start(self):
@@ -69,22 +74,24 @@ class StorageItem(metaclass = Meta):
         NewObjectTab = 2
         if NewItem:
             D = {}
+            if self.LibRef is None:
+                raise ValueError(f"Unassigned LibRef for {self}")
             for Key in self._SA:
-                Log(f"Saving data in {Key}", LogTab+IterableTab)
+                self.Log(f"Saving data in {Key}", LogTab+IterableTab)
                 D[self.Pack(Key, IDsToDicts, Packed, False, LogTab+IterableTab)] = self.Pack(getattr(self, Key), IDsToDicts, Packed, False, LogTab+IterableTab)
             if self._StoreTmpAttributes:
                 for Key, DefaultValue in self._TA.items():
-                    Log(f"Saving default attribute {Key}", LogTab)
+                    self.Log(f"Saving default attribute {Key}", LogTab)
                     D[Key] = self.Pack(DefaultValue, IDsToDicts, Packed, False, LogTab+IterableTab) # Class is reinstanciated with the default value
             return D
         if isinstance(Value, StorageItem):
             if Value in Packed:
                 ID = Packed[Value]
-                Log(f"Referenced object as ID {ID}", LogTab)
+                self.Log(f"Referenced object as ID {ID}", LogTab)
             else:
                 ID = max(Packed.values()) + 1
                 Packed[Value] = ID
-                Log(f"Packing object {Value} as ID {ID}", LogTab)
+                self.Log(f"Packing object {Value} as ID {ID}", LogTab)
                 IDsToDicts[ID] = Value.Pack(None, IDsToDicts, Packed, True, LogTab+NewObjectTab)
             return (REFERENCE, ID)
         VType = type(Value)
@@ -96,8 +103,7 @@ class StorageItem(metaclass = Meta):
             return (LIST, [self.Pack(VValue, IDsToDicts, Packed, False, LogTab+IterableTab) for VValue in Value])
         elif VType == set:
             return (SET, [self.Pack(VValue, IDsToDicts, Packed, False, LogTab+IterableTab) for VValue in Value])
-        elif VType == np.ndarray: # Possible error here, if V.shape = ()
-            #return (ARRAY, [self.Pack(VValue, IDsToDicts, Packed) for VValue in Value.tolist()])
+        elif VType == np.ndarray:
             return (ARRAY, Value)
         else:
             return (BUILDIN, Value)
@@ -109,41 +115,31 @@ class StorageItem(metaclass = Meta):
             ID = Type
             Unpacked[ID] = self
             self._Saved = True
-            if isinstance(self, FileSavedEntityC):
-                DefaultValues = {SA:getattr(self, SA) for SA in self._SA}
-                print("Default values :",  DefaultValues.keys())
-            else:
-                DefaultValues = {}
             for Key, Data in Value.items():
                 setattr(self, self.Unpack(*Key, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key), self.Unpack(*Data, IDsToDicts, Unpacked, False, LogTab+NewObjectTab, Key))
             for Key in self._SA:
                 if not hasattr(self, Key):
                     LogWarning(f"Object {self.LibRef} ({self}) missing stored attribute {Key}")
-            for Key, Value in DefaultValues.items():
-                if not hasattr(self, Key):
-                    setattr(self, Key, Value)
-                    print(f"Restaured default value for {Key}")
-            Log(f"Unpacked new object {self.LibRef} with ID {ID}", LogTab)
+            self.Log(f"Unpacked new object {self.LibRef} with ID {ID}", LogTab)
             return
         if Type in (DICT, LIST, SET, TUPLE, ARRAY) and False:
-            Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking {len(Value)}-items iterable", LogTab)
+            self.Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking {len(Value)}-items iterable", LogTab)
         if Type == REFERENCE:
             ID = Value
             if ID in Unpacked:
-                Log(bool(KeyName)*f"{KeyName}: " + f"Referenced from object {ID}", LogTab)
+                self.Log(bool(KeyName)*f"{KeyName}: " + f"Referenced from object {ID}", LogTab)
                 return Unpacked[ID]
             else:
                 Value = IDsToDicts[ID]
                 LibRef = Value.pop((BUILDIN, 'LibRef'))[1]
-                Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking new object {ID} from LibRef {LibRef}", LogTab)
+                self.Log(bool(KeyName)*f"{KeyName}: " + f"Unpacking new object {ID} from LibRef {LibRef}", LogTab)
                 
+                if LibRef is None:
+                    raise ValueError("LibRef unassigned")
                 StoredItemClass = StorageItem.GeneralLibrary[LibRef]
                 StoredItemClass(UnpackData = (ID, Value, IDsToDicts, Unpacked, True, LogTab))
-                #Unpacked[ID] = StorageItem.Library[Value.pop('LibRef')[1]](UnpackData = (ID, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab))
-                #Unpacked[ID].Unpack(DICT, Value, IDsToDicts, Unpacked, NewItem = True, LogTab = LogTab)
                 return Unpacked[ID]
         elif Type == DICT:
-            print([(VKey, VValue) for VKey, VValue in Value.items()])
             return {self.Unpack(*VKey, IDsToDicts, Unpacked, False, LogTab+IterableTab, f"{VKey}(key)"):self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+IterableTab, VKey) for VKey, VValue in Value.items()}
         elif Type == TUPLE:
             return tuple([self.Unpack(*VValue, IDsToDicts, Unpacked, False, LogTab+IterableTab) for VValue in Value])
@@ -154,13 +150,11 @@ class StorageItem(metaclass = Meta):
         elif Type == ARRAY:
             return Value
         elif Type == BUILDIN:
-            #Log(bool(KeyName)*f"{KeyName}: " + f"Unpacked {type(Value)} value {Value}", LogTab)
             return Value
         else:
             raise ValueError(bool(Key)*f"{Key}: " + f"Type {Type} saved for value {Value}")
 
 class FileSavedEntityC(StorageItem):
-    LibRef = "FSE"
     def __init__(self, *args, **kwargs):
         self.StoredAttribute('Filename', None)
     def Save(self):
@@ -199,6 +193,14 @@ class FileSavedEntityC(StorageItem):
         if StoredData:
             print("Non recovered items:\n - "+'\n - '.join([str(Key) for Key in StoredData.keys()]))
         return True
+    @classmethod
+    def PeekFile(cls, Filename, Keys):
+        Data = {}
+        with open(Filename, 'rb') as f:
+            RawData = pickle.load(f)
+            for Key in Keys:
+                Data[Key] = RawData[(BUILDIN, Key)]
+        return Data
 
 def Log(data, LogTab = 0, Tab = 2):
     print(LogTab*Tab*' '+data)

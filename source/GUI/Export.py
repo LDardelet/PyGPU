@@ -14,23 +14,22 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from GUITools import SFrame
 from Values import Params, Colors, PinDict
 from Board import BoardC
-from Library import LibraryC
+from Library import CustomBookC
 
 from Components import CasedComponentC
 
 matplotlib.use("TkAgg")
 
 class ExportGUI:
-    def __init__(self, master, Board):
-        self.Libraries = os.listdir(Params.GUI.DataAbsPath + Params.GUI.DataSubFolders['Libraries'])
-
+    def __init__(self, master, Board, LibraryHandler):
         self.Library = None
         self.Success = False
         self.CurrentComponent = None
+        self.LibraryHandler = LibraryHandler
 
         self.ExportWindow = Tk.Toplevel(master)
         self.LoadGUI()
-        self.ExportWindow.bind('<FocusOut>', self.OnClose)
+#        self.ExportWindow.bind('<FocusOut>', self.OnClose)
         self.ExportWindow.bind('<Escape>', self.OnClose)
 
         self.LoadComponent(Board)
@@ -52,14 +51,14 @@ class ExportGUI:
         ComponentFrame.AddWidget(Tk.Label, row = 0, column = 2, text = "Symbol:")
         ComponentFrame.AddWidget(Tk.Entry, row = 0, column = 3, textvariable = self.CompSymbolVar, width = 10).bind("<Return>", self.OnNamingChange)
 
-        LibFrame = self.MainFrame.TopPanel.AddFrame("Library")
-        self.LibraryVar = Tk.StringVar(self.ExportWindow, "")
-        LibFrame.AddWidget(Tk.Label, row = 0, column = 0, text = "Library:", width = 15)
-        LibMenu = LibFrame.AddWidget(Tk.OptionMenu, row = 0, column = 1, variable = self.LibraryVar, value = self.LibraryVar.get())
-        LibMenu.configure(width = 40)
-        for LibName in LibraryC.List():
-            LibMenu['menu'].add_command(label=LibName, command = lambda *args, self=self, LibName = LibName, **kwargs:self.SetLibrary(LibName))
-        LibMenu['menu'].add_command(label="New", command = self.NewLibrary)
+        BookFrame = self.MainFrame.TopPanel.AddFrame("Book")
+        self.BookVar = Tk.StringVar(self.ExportWindow, "")
+        BookFrame.AddWidget(Tk.Label, row = 0, column = 0, text = "Component book:", width = 15)
+        BookMenu = BookFrame.AddWidget(Tk.OptionMenu, row = 0, column = 1, variable = self.BookVar, value = self.BookVar.get())
+        BookMenu.configure(width = 40)
+        for BookName in self.LibraryHandler.BooksList[1:]: # 1: is to remode standard library
+            BookMenu['menu'].add_command(label=BookName, command = lambda *args, self=self, BookName = BookName, **kwargs:self.SetBook(BookName))
+        BookMenu['menu'].add_command(label="New", command = self.NewBook)
 
         PL_FD_Frame = self.MainFrame.TopPanel.AddFrame("PinLabels_ForcedDimensions")
 
@@ -94,21 +93,11 @@ class ExportGUI:
 
     def LoadComponent(self, Board):
         self.Board = Board
-        self.ComponentDict = {
-            'CName'   : '',
-            'Callback': None,
-            'UndefRun': False,
-            'Board'   : Board,
-            'PinLabelRule': 0b11,
-            'InputPinsDef':   tuple(),
-            'OutputPinsDef':  tuple(),
-            'ForceHeight':    None,
-            'ForceWidth' :    None,
-            'Symbol'     :    '',
-        }
+        self.CDict = CasedComponentC.DefinitionDict()
+        self.CDict['Board'] = Board
         if self.Board.Name:
             self.CompNameVar.set(self.Board.Name)
-            self.ComponentDict['CName'] = self.Board.Name
+            self.CDict['CName'] = self.Board.Name
 
         if Board.TruthTable.UpToDate:
             self.TTButton.configure(text='Up to date')
@@ -131,9 +120,9 @@ class ExportGUI:
     def UpdateComponent(self):
         if not self.CurrentComponent is None:
             self.CurrentComponent.destroy()
-        CurrentClass = type(self.ComponentDict['CName'],
+        CurrentClass = type(self.CDict['CName'],
                     (CasedComponentC, ),
-                    self.ComponentDict)
+                    self.CDict)
         CurrentClass.Display = self.Display.Ax
         self.CurrentComponent = CurrentClass(Location = np.zeros(2, dtype  =int), 
                                              Rotation = 0,
@@ -168,14 +157,22 @@ class ExportGUI:
                 Side = [PinDict.W, PinDict.S, PinDict.E, PinDict.N][Pin.Rotation + 2*(Pin.Type == PinDict.Output)]
                 PinsList += [((Side, Sides[Side].index(Pin)), Pin.Name)]
             print(ComponentKey, PinsList)
-            self.ComponentDict[ComponentKey] = tuple(PinsList)
+            self.CDict[ComponentKey] = tuple(PinsList)
 
-    def SetLibrary(self, LibName):
-        self.Library = LibraryC(LibName)
-    def NewLibrary(self, *args, **kwargs):
-        LibName = simpledialog.askstring("New library", "Enter new library name", parent=self.ExportWindow)
-        self.LibraryVar.set(LibName)
-        self.Library = LibraryC.New(LibName)
+    def SetBook(self, BookName):
+        self.Book = self.LibraryHandler.Books[BookName]
+        self.BookVar.set(BookName)
+    def NewBook(self, *args, **kwargs):
+        BookName = simpledialog.askstring("New components book", "Enter the new components book name", parent=self.ExportWindow).strip()
+        if not BookName:
+            return
+        try:
+            self.Book = CustomBookC.New(BookName)
+            self.BookVar.set(BookName)
+        except ValueError:
+            if messagebox.askokcancel("Book exists", f"Add required book {BookName} to the current library profile ?"):
+                self.BookVar.set(BookName)
+                self.Book = CustomBookC(BookName)
 
     def OnDimensionsChange(self, *args, **kwargs):
         try:
@@ -186,7 +183,7 @@ class ExportGUI:
         except:
             Width = None
             self.ForcedWidthVar.set(f'{self.MinWidth}(auto)')
-        self.ComponentDict['ForceWidth'] = Width
+        self.CDict['ForceWidth'] = Width
         try:
             Height = int(self.ForcedHeightVar.get())
             if Height < self.MinHeight:
@@ -195,16 +192,16 @@ class ExportGUI:
         except:
             Height = None
             self.ForcedHeightVar.set(f'{self.MinHeight}(auto)')
-        self.ComponentDict['ForceHeight'] = Height
+        self.CDict['ForceHeight'] = Height
         self.UpdateComponent()
 
     def OnNamingChange(self, *args, **kwargs):
-        self.ComponentDict['CName'] = self.CompNameVar.get()
-        self.ComponentDict['Symbol'] = self.CompSymbolVar.get()
+        self.CDict['CName'] = self.CompNameVar.get()
+        self.CDict['Symbol'] = self.CompSymbolVar.get()
         self.UpdateComponent()
 
     def OnLabelRuleChange(self, *args, **kwargs):
-        self.ComponentDict['PinLabelRule'] = bool(self.PinNameVar.get()) << 1 | bool(self.PinNumVar.get())
+        self.CDict['PinLabelRule'] = bool(self.PinNameVar.get()) << 1 | bool(self.PinNumVar.get())
         self.UpdateComponent()
 
     def ComputeTruthTable(self):
@@ -223,26 +220,28 @@ class ExportGUI:
         self.TTButton.configure(activebackground=Colors.GUI.Widget.validButton)
 
     def Export(self, *args, **kwargs):
-        if self.Library is None:
-            print("No library selected")
+        if self.Book is None:
+            print("No book selected")
             return
-        if not self.ComponentDict['CName']:
+        if not self.CDict['CName']:
             print("Missing component name")
             return
-        if (self.ComponentDict['PinLabelRule'] == 0b00) and ((len(self.ComponentDict['InputPinsDef']) > 1) or (len(self.ComponentDict['OutputPinsDef']) > 1)):
+        if (self.CDict['PinLabelRule'] == 0b00) and ((len(self.CDict['InputPinsDef']) > 1) or (len(self.CDict['OutputPinsDef']) > 1)):
             print("Cannot remove all pins labeling with multiple inputs or outputs.")
             return
         Warnings = []
         if not self.Board.TruthTable.UpToDate:
             Warnings.append("Missing truth table")
-        if not self.ComponentDict['Symbol']:
+        if not self.CDict['Symbol']:
             Warnings.append("Missing symbol")
-        if self.ComponentDict['CName'] in self.Library:
+        if self.CDict['CName'] in self.Book:
             Warnings.append("Component name already taken")
         if Warnings:
             if not messagebox.askokcancel("Warnings", '\n - '.join(["Some informations seem to be missing:"]+Warnings)):
                 return
-        self.Library.AddComponent(self.ComponentDict)
+        self.Book.AddComponent(self.CDict)
+        if not self.Book in self.LibraryHandler:
+            self.LibraryHandler.AddBook(self.Book)
         self.Success = True
         self.OnClose()
 

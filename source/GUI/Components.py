@@ -371,6 +371,22 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
     ForceHeight = None
     PinLabelRule = None
     Symbol = ''
+
+    @staticmethod
+    def DefinitionDict():
+        return {
+            'CName'         : '',
+            'Book'          : None,
+            'Callback'      : None,
+            'UndefRun'      : False,
+            'Board'         : None,
+            'PinLabelRule'  : 0b11,
+            'InputPinsDef'  : tuple(),
+            'OutputPinsDef' : tuple(),
+            'ForceHeight'   : None,
+            'ForceWidth'    : None,
+            'Symbol'        : '',
+        }
     def __init__(self, Location, Rotation, Symmetric):
         super().__init__(Location, Rotation, Symmetric)
         self.StoredAttribute('InputPins', [])
@@ -451,9 +467,10 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
             for Pin in self.OutputPins:
                 Pin.CasingOutputSetLevel(Levels.Undef, Backtrace + [self])
             return 
-        Level = self.Level
-        for Pin, Level in zip(self.OutputPins, self.Run(*self.Input)):
-            Pin.CasingOutputSetLevel(Level, Backtrace + [self])
+        OutputLevel = self.Run(self.InputLevel)
+        for Pin in self.OutputPins:
+            Pin.CasingOutputSetLevel((OutputLevel & 0b1), Backtrace + [self])
+            OutputLevel >>= 1
         return 
     @property
     def Input(self):
@@ -462,7 +479,13 @@ class CasedComponentC(ComponentBase): # Template to create any type of component
     def Output(self):
         return [Pin.Level for Pin in self.OutputPins]
     @property
-    def Level(self): # We define a cased component level as the binary representation of its output
+    def InputLevel(self): # We define a cased component level as the binary representation of its output
+        Level = 0
+        for nPin, Pin in enumerate(self.InputPins):
+            Level |= (Pin.Level & 0b1) << nPin
+        return Level
+    @property
+    def OutputLevel(self): # We define a cased component level as the binary representation of its output
         if not self.InputReady:
             return 0
         Level = 0

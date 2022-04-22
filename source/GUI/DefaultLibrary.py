@@ -10,73 +10,85 @@ def N(SideIndex, Name = ''):
 def S(SideIndex, Name = ''):
     return ((PinDict.S, SideIndex), Name)
 
-Definitions = {
-    'Wire' :(WireC, 'w'),
-    'I/O'  :(BoardPinC, 'i'),
-    'And'  :(([W(0),
+Name = 'Standard'
+_DefTuple = ('InputPinsDef', 'OutputPinsDef', 'Callback', 'UndefRun', 'Board', 'ForceWidth', 'ForceHeight', 'PinLabelRule', 'Symbol')
+_Definitions = (
+    ('Wire' ,WireC, 'w'),
+    ('I/O'  ,BoardPinC, 'i'),
+    ('And'  ,([W(0),
                W(1)],
               [E(0)],
-        lambda a, b: (a & b,), 
+              lambda a: (a & 0b1) & ((a>>1) & 0b1), 
         False,
         None, 
         None, 
         None, 
         0b00,
         '&'), 'a'),
-    'Or' :(([W(0),
+    ('Or' ,([W(0),
              W(1)],
             [E(0)],
-        lambda a, b: (a | b,) , # Need this to allow for undef run
+        lambda a: (a & 0b1) | ((a>>1) & 0b1) , # Need this to allow for undef run
         False,
         None, 
         None, 
         None, 
         0b00,
         '|'), 'o'),
-    'XOr' :(([W(0),
+    ('XOr' ,([W(0),
              W(1)],
             [E(0)],
-        lambda a, b: (a ^ b,) , 
+        lambda a: (a & 0b1) ^ ((a>>1) & 0b1) , 
         False,
         None, 
         None, 
         None, 
         0b00,
         '^'), 'x'),
-    'Not':(([W(0, 'in')],
+    ('Not',([W(0, 'in')],
             [E(0, 'out')],
-        lambda a   : (not a,)  , 
+        lambda a   : not a  , 
         False,
         None, 
         None, 
         None, 
         0b00,
         '~'), 'n'),
-    'High' :(([],
+    ('High' ,([],
         [E(0)],
-        lambda     : (True,)   , 
+        lambda a   : True   , 
         False,
         None, 
         None, 
         None,
         0b00,
-        '+'),  'h'),
-    'Low':(([],
+        '+'), 'h'),
+    ('Low',([],
         [E(0)],
-        lambda     : (False,)  , 
+        lambda a    : False  , 
         False,
         None, 
         None, 
         None,
         0b00,
         '-'), 'l'),
-    'Pull-down':(([W(0, 'in')],
+    ('Pull-down',([W(0, 'in')],
         [E(0, 'out')],
-        lambda a    : (Levels.High if a == Levels.High else Levels.Low,)  , 
+        lambda a    : (Levels.High if a == Levels.High else Levels.Low)  , 
         True,
         None, 
         None, 
         None,
         0b00,
         '='), 'q'),
-}
+)
+
+def UnpackDef(CDef):
+    if type(CDef) == tuple:
+        return {Key:Value for Key, Value in zip(_DefTuple, CDef)}
+    else:
+        return CDef
+
+CList = [CName for CName, _, _ in _Definitions]
+CDicts = {CName:UnpackDef(CDef) for CName, CDef, _ in _Definitions}
+DefaultKeys = {CName:CKey for CName, _, CKey in _Definitions}

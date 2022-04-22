@@ -105,6 +105,7 @@ class SFrame:
         self.Name = Name
         self.Side = Side
         self.NameDisplayed = NameDisplayed
+        self.ChildrenNames = {}
         
     def AdvertiseChild(self, NewChild, Name):
         if hasattr(self, Name):
@@ -112,6 +113,7 @@ class SFrame:
         if Name[:2] != self.Prefix:
             Name = self.Prefix + Name
         setattr(self, Name, NewChild)
+        self.ChildrenNames[NewChild] = Name
 
     def __getattr__(self, Key):
         if Key[:2] != self.Prefix:
@@ -145,10 +147,15 @@ class SFrame:
         NewFrame.AddWidget(Tk.Label, self.DefaultLabelName, 0, 0, text = Name.replace('_', ' ') * (1-NoName), **LabelKwargs)
         return NewFrame
 
-    def Destroy(self, ChildName):
-        if ChildName[:2] != self.Prefix:
-            ChildName = self.Prefix + ChildName
-        Child = getattr(self, ChildName)
+    def Destroy(self, Child_ChildName):
+        if type(Child_ChildName) == str:
+            ChildName = Child_ChildName
+            if ChildName[:2] != self.Prefix:
+                ChildName = self.Prefix + ChildName
+            Child = getattr(self, ChildName)
+        else:
+            Child = Child_ChildName
+            ChildName = self.ChildrenNames[Child]
         if Child.__class__ == self.__class__:
             for WidgetChild in Child.frame.winfo_children():
                 WidgetChild.destroy()
@@ -156,6 +163,7 @@ class SFrame:
         else:
             Child.destroy()
         delattr(self, ChildName)
+        del self.ChildrenNames[Child]
 
     def RemoveDefaultName(self):
         if hasattr(self, self.DefaultLabelName) and not self.NameDisplayed:

@@ -48,11 +48,10 @@ class ComponentsHandlerC(StorageItem):
             Component, Backtrace = self.AwaitingUpdates.pop()
             try:
                 Component(list(Backtrace))
-            except:
-                print("Requests solve error :")
+            except Exception as e:
+                print(f"Requests solve error for component {Component} of group {Component.Group}:")
+                print(f"Exception : {e}")
                 print(Backtrace)
-                print(Component)
-                print(Component.Group)
                 return
 
     def Register(self, NewComponent):

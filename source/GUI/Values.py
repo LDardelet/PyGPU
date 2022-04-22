@@ -68,8 +68,9 @@ class Params:
     class GUI:
         Name = 'Logic Gates Simulator'
         DataFolder = '~/Documents/PyGPUFiles/'
-        DataSubFolders = {"Libraries":"Libraries/",
+        DataSubFolders = {"Library":"Components/",
                           "Projects" :"Projects/",}
+        ProfileFile = 'gui.profile'
         DataAbsPath = None
         class Library:
             Columns = 2

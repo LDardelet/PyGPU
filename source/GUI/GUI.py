@@ -5,6 +5,7 @@ from PIL import Image
 import os, sys
 import sys
 import numpy as np
+import json
 
 import matplotlib
 from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
@@ -14,6 +15,7 @@ from Console import ConsoleWidget, ConsoleText, Log, LogSuccess, LogWarning, Log
 from Values import Colors, Params, PinDict
 from GUITools import ModesDict, ModeC, SFrame, SEntry, SLabel, SPinEntry, BoardIOWidgetBase, BoardDisplayC
 from Library import LibraryHandlerC
+import DefaultLibrary
 from Board import BoardC
 from Export import ExportGUI
 
@@ -170,15 +172,21 @@ class GUI:
     def __init__(self, Args):
         if not os.path.exists(Params.GUI.DataAbsPath):
             os.mkdir(Params.GUI.DataAbsPath)
-        for DataSubFolder in Params.GUI.DataSubFolders:
+        for Container, DataSubFolder in Params.GUI.DataSubFolders.items():
             if not os.path.exists(Params.GUI.DataAbsPath + DataSubFolder):
                 os.mkdir(Params.GUI.DataAbsPath + DataSubFolder)
+                print(f"Created {Container} folder")
+        try:
+            with open(Params.GUI.DataAbsPath + Params.GUI.ProfileFile, 'r') as f:
+                self.ProfileDict = json.load(f)
+        except:
+            self.ProfileDict = self.NewGUIProfile()
 
         self.MainWindow = Tk.Tk()
 
         BoardIOWidgetBase.GUI = self
         ModeC.GUI = self
-        self.Library = LibraryHandlerC()
+        self.LibraryHandler = LibraryHandlerC()
         self.LoadedBoards = []
         self.LoadedDisplays = []
         self.CurrentBoard = None
@@ -280,6 +288,7 @@ class GUI:
             Success = self.CurrentBoard.Save(Filename, Force = Force)
             if Success:
                 self.MainWindow.title(Params.GUI.Name + f" ({self.CurrentBoard})")
+                LogSuccess("Board saved")
             return Success
         else:
             LogWarning("Data unsaved")
@@ -290,12 +299,62 @@ class GUI:
             Log("Impossible to export a board without any IO pin")
             return
 
-        self.Export = ExportGUI(self.MainWindow, self.CurrentBoard)
-        self.Export.ExportWindow.wait_window()
-        if self.Export.Success:
+        ExportSession = ExportGUI(self.MainWindow, self.CurrentBoard, self.LibraryHandler)
+        ExportSession.ExportWindow.wait_window()
+        if ExportSession.Success:
             Log("Success")
+#            self.UpdateLibrary()
         else:
             LogWarning("Component export failed")
+
+    def ManageLibraries(self):
+        LibrarySession = LibraryGUI(self.MainWindow)
+        LibrarySession.LibraryWindow.wait_window()
+        self.UpdateLibrary()
+
+    @classmethod
+    def NewGUIProfile(cls):
+        Data = {}
+        Data['libraryprofile'] = LibraryHandlerC.DefaultProfile
+        Data['keys'] = {'components':{f'{DefaultLibrary.Name}.{CName}'.lower():DefaultLibrary.DefaultKeys[CName] for CName in DefaultLibrary.CList}}
+        with open(Params.GUI.DataAbsPath + Params.GUI.ProfileFile, 'w') as f:
+            json.dump(Data, f)
+        return Data
+
+    def UpdateLibrary(self):
+        self.SetLibraryButtonColor(None)
+        for BookFrame, ComponentsButtons in self.LibraryWidgetsTree.items():
+            for (ComponentButton, ComponentControlKey) in ComponentsButtons:
+                BookFrame.ComponentsFrame.Destroy(ComponentButton)
+                if ComponentControlKey:
+                    self.RemoveControlKey(ComponentControlKey, Mod = 0)
+            BookFrame.Destroy(BookFrame.ComponentsFrame)
+            self.MainFrame.Library.Destroy(BookFrame)
+        
+        self.LibraryHandler.Load(self.ProfileDict['libraryprofile'])
+        self.LibraryWidgetsTree = {}
+        self.ComponentToButton = {}
+        for BookName in self.LibraryHandler.BooksList:
+            Book = self.LibraryHandler.Books[BookName]
+            BookFrame = self.MainFrame.Library.AddFrame(BookName, Side = Tk.TOP, NameDisplayed = True)
+            self.LibraryWidgetsTree[BookFrame] = []
+            BookFrame.AddFrame("ComponentsFrame", NameDisplayed = False)
+            for nComp, CName in enumerate(Book.CList):
+                row = nComp // Params.GUI.Library.Columns
+                column = nComp % Params.GUI.Library.Columns
+                CClass = Book.CClasses[CName]
+                print(f'{CClass.Book}.{CName}')
+                ComponentControlKey = self.ProfileDict['keys']['components'].get(f'{CClass.Book}.{CName}'.lower(), '')
+                Add = ''
+                if ComponentControlKey:
+                    Add = f' ({ComponentControlKey})'
+                    self.AddControlKey(ComponentControlKey, lambda key, mod, CClass = CClass: self.StartComponent(CClass))
+                ComponentButton = BookFrame.ComponentsFrame.AddWidget(Tk.Button, f"{BookName}.{CName}", row = row, column = column, text = CName+Add, 
+                                                                        height = Params.GUI.Library.ComponentHeight, 
+                                                                        width = Params.GUI.Library.ComponentWidth,
+                                                                        command = lambda CClass = CClass: self.OnComponentButtonClick(CClass))
+                self.ComponentToButton[CClass] = ComponentButton
+                self.LibraryWidgetsTree[BookFrame].append((ComponentButton, ComponentControlKey))
 
     def Open(self, New=False, Filename=''):
         if New:
@@ -311,7 +370,7 @@ class GUI:
                         self.SelectBoard(Board)
                         return
                 LoadingDisplay = self.NewDisplay()
-                self.Library.ComponentBase.Display = LoadingDisplay.Ax
+                self.LibraryHandler.ComponentBase.Display = LoadingDisplay.Ax
                 self.LoadedBoards.append(BoardC(Filename, LoadingDisplay))
             else:
                 return
@@ -368,7 +427,7 @@ class GUI:
         self.CurrentDisplay.Widget.grid(row = 0, column = 0)
 
         self.UpdateCursorStyle() # Display is loaded with a default black color to reduce Tools interactions with modes. Need to update it right away
-        self.Library.ComponentBase.Display = self.CurrentDisplay.Ax
+        self.LibraryHandler.ComponentBase.Display = self.CurrentDisplay.Ax
 
         self.CurrentDisplay.Canvas.mpl_connect('button_press_event', lambda e:self.OnClickMove(np.array([e.xdata, e.ydata])))
         self.MainWidget = self.CurrentDisplay.Widget
@@ -385,7 +444,7 @@ class GUI:
     @Modes.Build
     @Update(LocalView)
     def StartComponent(self, CClass, Rotation = 0, Symmetric = False):
-        self.SetLibraryButtonColor(self.CompToButtonMap[CClass])
+        self.SetLibraryButtonColor(self.ComponentToButton[CClass])
         self.TmpComponents.add(CClass(self.Cursor, Rotation, Symmetric))
 
     @Update(LocalView)
@@ -430,11 +489,11 @@ class GUI:
     def SetWireSymmetry(self, Symmetric):
         self.WireButtons[int(Symmetric)].configure(background = Colors.GUI.Widget.pressed)
         self.WireButtons[1-int(Symmetric)].configure(background = Colors.GUI.Widget.default)
-        if Symmetric != self.Library.Wire.DefaultSymmetric:
-            self.Library.Wire.DefaultSymmetric = Symmetric
+        if Symmetric != self.LibraryHandler.Wire.DefaultSymmetric:
+            self.LibraryHandler.Wire.DefaultSymmetric = Symmetric
             if self.Modes.Build:
                 for Component in self.TmpComponents:
-                    if self.Library.IsWire(Component) and Component.Symmetric != Symmetric:
+                    if self.LibraryHandler.IsWire(Component) and Component.Symmetric != Symmetric:
                         Component.Switch()
 
     def Set(self):
@@ -449,12 +508,12 @@ class GUI:
                 self.TmpComponents.add(Component)
         elif self.Modes.Default:
             if self.CurrentBoard.HasItem(self.Cursor) and self.CurrentBoard.FreeSlot(self.Cursor):
-                self.StartComponent(self.Library.Wire)
+                self.StartComponent(self.LibraryHandler.Wire)
 
     @Update(BoardPinsLayout, BoardState)
     def ConfirmComponentRegister(self, Component, Joins):
         self.MoveHighlight()
-        if Params.GUI.Behaviour.AutoContinueComponent and (not self.Library.IsWire(Component) or (not Params.GUI.Behaviour.StopWireOnJoin) or not Joins):
+        if Params.GUI.Behaviour.AutoContinueComponent and (not self.LibraryHandler.IsWire(Component) or (not Params.GUI.Behaviour.StopWireOnJoin) or not Joins):
             self.StartComponent(Component.__class__, Component.Rotation)
         else:
             self.Modes.Default(Message='end of build')
@@ -616,11 +675,15 @@ class GUI:
         self.OnKeyRegistration(Callback, Symbol, Modifier)
 
     def AddControlKey(self, Key, Callback, Mod = 0):
+        print(f"Adding CC {Key}, mod {Mod}")
         if not Key in self.KeysFunctionsDict:
             self.KeysFunctionsDict[Key] = {}
         if Mod in self.KeysFunctionsDict[Key]:
             raise ValueError(f"Used key : {bool(Mod)*(('', 'Ctrl', 'Shift')[Mod]+'+')}{Key}")
         self.KeysFunctionsDict[Key][Mod] = Callback
+    def RemoveControlKey(self, Key, Mod):
+        print(f"Removing CC {Key}, mod {Mod}")
+        del self.KeysFunctionsDict[Key][Mod]
 
     def LoadMenu(self):
         def AddCommand(Menu, Label, Callback, *args, **kwargs):
@@ -640,9 +703,13 @@ class GUI:
 
         EMenu = Tk.Menu(MainMenu, tearoff=0)
         AddCommand(EMenu, "Undo", self.Undo)
-        AddCommand(EMenu, "Manage libraries", self.ManageLibraries)
         AddCommand(EMenu, "Options", self.Options)
         MainMenu.add_cascade(label="Edit", menu=EMenu)
+
+        LMenu = Tk.Menu(MainMenu, tearoff=0)
+        AddCommand(LMenu, "Reload", self.UpdateLibrary)
+        AddCommand(LMenu, "Manage libraries", self.ManageLibraries)
+        MainMenu.add_cascade(label="Library", menu=LMenu)
 
         HMenu = Tk.Menu(MainMenu, tearoff=0)
         AddCommand(HMenu, "Help Index", Void)
@@ -657,7 +724,6 @@ class GUI:
         raise NotImplementedError
     def About(self):
         raise NotImplementedError
-    def ManageLibraries(self):
 
     def LoadConsole(self):
         ConsoleInstance = ConsoleWidget(self.MainFrame.Console.frame, locals(), self.MainWindow.destroy)
@@ -763,25 +829,10 @@ class GUI:
         self.MainFrame.Right_Panel.AddFrame("Output_Pins", row = 3, column = 1, Border = True, NameDisplayed = True, Width = Params.GUI.RightPanel.HalfWidth)
 
     def LoadLibraryGUI(self):
-        self.CompToButtonMap = {}
+        self.LibraryWidgetsTree = {}
+        self.ComponentToButton = {}
         self.CurrentCompButton = None
-        for BookName in self.Library.Books:
-            Book = getattr(self.Library, BookName)
-            BookFrame = self.MainFrame.Library.AddFrame(BookName, Side = Tk.TOP, NameDisplayed = True)
-            CompFrame = BookFrame.AddFrame("CompFrame", NameDisplayed = False)
-            for nComp, CompName in enumerate(Book.Components):
-                row = nComp // Params.GUI.Library.Columns
-                column = nComp % Params.GUI.Library.Columns
-                CompClass = getattr(Book, CompName)
-                ControlKey = getattr(Book, 'key_'+CompName)
-                Add = ''
-                if ControlKey:
-                    Add = f' ({ControlKey})'
-                    self.AddControlKey(ControlKey, lambda key, mod, CompClass = CompClass: self.StartComponent(CompClass))
-                self.CompToButtonMap[CompClass] = CompFrame.AddWidget(Tk.Button, f"{BookName}.{CompName}", row = row, column = column, text = CompName+Add, 
-                                                                        height = Params.GUI.Library.ComponentHeight, 
-                                                                        width = Params.GUI.Library.ComponentWidth,
-                                                                        command = lambda CompClass = CompClass: self.OnComponentButtonClick(CompClass))
+        self.UpdateLibrary()
 
     def SetLibraryButtonColor(self, Button):
         if Button == self.CurrentCompButton:
