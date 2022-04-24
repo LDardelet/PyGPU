@@ -270,3 +270,200 @@ class ComponentDisplayC:
                                  [nLine*RLE, nLine*RLE], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
             self.Plots['VLines']=[self.Ax.plot([nLine*RLE, nLine*RLE],
                                  [-Params.Board.Max, Params.Board.Max], color = Colors.GUI.default, alpha = 0.2)[0] for nLine in range(-NLines//2+1, NLines//2)]
+
+class LibraryGUI:
+    def __init__(self, master, LibraryHandler):
+        self.LibraryHandler = LibraryHandler
+
+        self.LibraryWindow = Tk.Toplevel(master)
+        self.LoadGUI()
+        self.LibraryWindow.bind('<Escape>', self.OnClose)
+
+    def LoadGUI(self):
+        self.MainFrame = SFrame(self.LibraryWindow)
+        self.LibraryWindow.title(Params.LibraryGUI.Name)
+
+        self.MainFrame.AddFrame("Profiles", 0, 0, Side = Tk.TOP, NameDisplayed = True, Width = Params.LibraryGUI.Widths.Profiles)
+        self.MainFrame.AddFrame("ProfilesButtons", 1, 0, Side = Tk.LEFT)
+        self.MainFrame.AddFrame("Books", 0, 1, Side = Tk.TOP, Width = Params.LibraryGUI.Widths.Books, Border = False)
+        self.MainFrame.AddFrame("BooksButtons", 1, 1, Side = Tk.LEFT)
+        self.MainFrame.AddFrame("Components", 0, 2, Side = Tk.TOP, NameDisplayed = True, Width = Params.LibraryGUI.Widths.Components)
+        self.MainFrame.AddFrame("ComponentsButtons", 1, 2, Side = Tk.LEFT)
+        self.MainFrame.AddFrame("Bottom", 2, 0, columnspan = 3, Side = Tk.RIGHT)
+
+        def SetupListbox(frame, SelectFunction, width):
+            listbox = Tk.Listbox(frame, exportselection=0, width = width)
+            frame.pack(side = Tk.TOP, fill = Tk.BOTH)
+            listbox.pack(side = Tk.LEFT, fill = Tk.BOTH)
+            scrollbar = Tk.Scrollbar(frame)
+            scrollbar.pack(side = Tk.RIGHT, fill = Tk.BOTH)
+            listbox.config(yscrollcommand = scrollbar.set)
+            scrollbar.config(command = listbox.yview)
+            listbox.bind('<<ListboxSelect>>', lambda event, listbox=listbox:SelectFunction(listbox.curselection()))
+            return listbox
+
+        frame = Tk.Frame(self.MainFrame.Profiles.frame)
+        self.ProfilesListbox = SetupListbox(frame, self.SelectProfile, Params.LibraryGUI.Widths.Profiles)
+
+        self.MainFrame.Books.AddFrame("Profile_Books", Side = Tk.TOP, NameDisplayed=True)
+        frame = Tk.Frame(self.MainFrame.Books.Profile_Books.frame)
+        frame.rowconfigure(0, weight=1)
+        self.BooksListbox = SetupListbox(frame, self.SelectBook, Params.LibraryGUI.Widths.Books)
+
+        self.MainFrame.Books.AddFrame("Other_Books", Side = Tk.TOP, NameDisplayed=True)
+        frame = Tk.Frame(self.MainFrame.Books.Other_Books.frame)
+        self.OtherBooksListbox = SetupListbox(frame, self.SelectOtherBook, Params.LibraryGUI.Widths.Books)
+
+        frame = Tk.Frame(self.MainFrame.Components.frame)
+        self.ComponentsListbox = SetupListbox(frame, self.SelectComponent, Params.LibraryGUI.Widths.Components)
+
+        self.UpdateProfiles()
+        self.SelectedProfile = self.LibraryHandler.Profile
+        self.UpdateBooks()
+
+        self.ProfilesListbox.configure(height = 15)
+        self.BooksListbox.configure(height = 10)
+        self.OtherBooksListbox.configure(height = 3)
+        self.ComponentsListbox.configure(height = 15)
+
+        self.UpdateComponents()
+        self.ProfilesListbox.selection_set(0)
+
+
+        self.MainFrame.ProfilesButtons.AddWidget(Tk.Button, text = "Use", command = self.SetDefaultProfile)
+        self.MainFrame.ProfilesButtons.AddWidget(Tk.Button, text = "Delete", command = self.DeleteProfile)
+
+        self.MainFrame.BooksButtons.AddWidget(Tk.Button, "Toggle", text = "Add", command = self.ToggleProfileBook, state = Tk.DISABLED)
+        self.MainFrame.BooksButtons.AddWidget(Tk.Button, "Up", text = "^", command = lambda:self.MoveBook(+1), state = Tk.DISABLED)
+        self.MainFrame.BooksButtons.AddWidget(Tk.Button, "Down", text = "v", command = lambda:self.MoveBook(-1), state = Tk.DISABLED)
+        self.MainFrame.BooksButtons.AddWidget(Tk.Button, "Delete", text = "Delete", command = self.DeleteBook, state = Tk.DISABLED)
+
+        self.MainFrame.Bottom.AddWidget(Tk.Button, text = "Close", command = self.OnClose)
+
+    def SetDefaultProfile(self):
+        pass
+    def DeleteProfile(self):
+        pass
+    def ToggleProfileBook(self):
+        pass
+    def MoveBook(self, var):
+        pass
+    def DeleteBook(self):
+        pass
+
+    def UpdateProfiles(self):
+        self.SelectedProfile = None
+        self.UpdateBooks()
+        self.ProfilesListbox.delete(0, Tk.END)
+
+        self.DisplayedProfiles = []
+        for Profile in self.LibraryHandler.List():
+            if Profile == self.LibraryHandler.Profile:
+                self.DisplayedProfiles.insert(0, Profile + ' (*)')
+            else:
+                self.DisplayedProfiles.append(Profile)
+        for Profile in self.DisplayedProfiles:
+            self.ProfilesListbox.insert(Tk.END, Profile)
+    def UpdateBooks(self):
+        self.AllBooks = {BName: CustomBookC(BName) for BName in CustomBookC.List()}
+
+        self.SelectedBook = None
+        self.UpdateComponents()
+        self.BooksListbox.delete(0, Tk.END)
+        self.OtherBooksListbox.delete(0, Tk.END)
+        if self.SelectedProfile is None:
+            self.BooksList = []
+        else:
+            ProfileExists, _, self.BooksList, _ = self.LibraryHandler.OpenProfile(self.SelectedProfile)
+            if not ProfileExists:
+                print(f"Listed profile does not exist : {self.SelectedProfile}")
+                self.BooksList = []
+            else:
+                self.BooksList.pop(0) # Remove Standard
+
+        self.OtherBooksList = [BName for BName in sorted(set(self.AllBooks.keys()).difference(set(self.BooksList)))]
+        for BName in self.OtherBooksList:
+            self.OtherBooksListbox.insert(Tk.END, BName)
+        for BName in self.BooksList:
+            self.BooksListbox.insert(Tk.END, BName)
+    def UpdateComponents(self):
+        self.SelectedComponent = None
+        self.ComponentsListbox.delete(0, Tk.END)
+        if self.SelectedBook is None:
+            return
+        for CName in self.SelectedBook[0].CList:
+            self.ComponentsListbox.insert(Tk.END, CName)
+
+    def SelectProfile(self, Selection):
+        if len(Selection) == 0:
+            return
+
+        print("Profile", Selection)
+        Index = Selection[0]
+        if Index == 0:
+            Profile = self.LibraryHandler.Profile # Allows to remove the CurrentProfile identifier
+        else:
+            Profile = self.DisplayedProfiles[Index]
+        if Profile == self.SelectedProfile:
+            return
+        self.SelectedProfile = Profile
+        self.UpdateBooks()
+
+    def SelectBook(self, Selection):
+        if len(Selection) == 0:
+            self.CheckBooksButtons()
+            return
+
+        print("Book", Selection)
+        Index = Selection[0]
+
+        self.OtherBooksListbox.selection_clear(0)
+        self.SelectedBook = (self.AllBooks[self.BooksList[Index]], True)
+        self.UpdateComponents()
+        self.CheckBooksButtons()
+    def SelectOtherBook(self, Selection):
+        if len(Selection) == 0:
+            self.CheckBooksButtons()
+            return
+
+        print("Other book", Selection)
+        Index = Selection[0]
+        
+        self.BooksListbox.selection_clear(0)
+        self.SelectedBook = (self.AllBooks[self.OtherBooksList[Index]], False)
+        self.UpdateComponents()
+        self.CheckBooksButtons()
+        
+    def CheckBooksButtons(self):
+        if self.SelectedBook is None:
+            self.MainFrame.Books.Buttons.Toggle.configure(state = Tk.DISABLED)
+            self.MainFrame.Books.Buttons.Up.configure(state = Tk.DISABLED)
+            self.MainFrame.Books.Buttons.Down.configure(state = Tk.DISABLED)
+            self.MainFrame.Books.Buttons.Delete.configure(state = Tk.DISABLED)
+            return
+
+        self.MainFrame.Books.Buttons.Toggle.configure(state = Tk.NORMAL)
+        self.MainFrame.Books.Buttons.Delete.configure(state = Tk.NORMAL)
+        if self.SelectedBook[1]:
+            self.MainFrame.Books.Buttons.Toggle.configure(text = "Remove")
+            if not self.SelectedBook.Name != self.BooksList[0]:
+                self.MainFrame.Books.Buttons.Up.configure(state = Tk.NORMAL)
+            else:
+                self.MainFrame.Books.Buttons.Up.configure(state = Tk.DISABLED)
+            if not self.SelectedBook.Name != self.BooksList[-1]:
+                self.MainFrame.Books.Buttons.Down.configure(state = Tk.NORMAL)
+            else:
+                self.MainFrame.Books.Buttons.Down.configure(state = Tk.DISABLED)
+        else:
+            self.MainFrame.Books.Buttons.Toggle.configure(text = "Add")
+            self.MainFrame.Books.Buttons.Up.configure(state = Tk.DISABLED)
+            self.MainFrame.Books.Buttons.Down.configure(state = Tk.DISABLED)
+            
+    def SelectComponent(self, Selection):
+        if len(Selection) == 0:
+            return
+
+        print("Component", Selection)
+        Index = Selection[0]
+    def OnClose(self, *args, **kwargs):
+        self.LibraryWindow.destroy()

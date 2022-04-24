@@ -116,7 +116,6 @@ class LibraryHandlerC:
     Folder = Params.GUI.DataAbsPath + Params.GUI.DataSubFolders['Library']
     DefaultProfile = 'Default'
     _extension = '.lbr'
-    _CurrentStr = '**'
     def __init__(self):
         StorageItem.GeneralLibrary = self
         self.Wire = ComponentsModule.WireC
@@ -124,18 +123,18 @@ class LibraryHandlerC:
 
     def Load(self, Profile):
         self.Profile = Profile
-        self.Books = {StandardBook.Name : StandardBook}
-        self.BooksList = [StandardBook.Name]
 
-        if not self.ProfileExists(Profile):
-            self.NewProfile(Profile)
-            self.SaveCurrentProfile()
+        ProfileExists, self.Books, self.BooksList, MissingBook = self.OpenProfile(Profile)
+        if not ProfileExists:
+            self.CreateProfile(self.Profile)
+            self.SaveProfile(self.Profile, self.BooksList)
+            return
         else:
             print(f"Loading library profile {self.Profile}")
 
         with open(self.NameToFile(self.Profile), 'r') as f:
             Lines = f.readlines()
-        ReadProfile = Lines.pop(0).strip().strip(self._CurrentStr)
+        ReadProfile = Lines.pop(0).strip()
         if ReadProfile != self.Profile:
             print(len(ReadProfile), len(self.Profile))
             print(f"Corrupted profile ({ReadProfile} vs {self.Profile})")
@@ -150,11 +149,35 @@ class LibraryHandlerC:
             self.BooksList.append(BookName)
         
         if MissingBook:
-            self.SaveCurrentProfile()
+            self.SaveProfile(self.Profile, self.BooksList)
     
+    def OpenProfile(self, Profile):
+        Books = {StandardBook.Name : StandardBook}
+        BooksList = [StandardBook.Name]
+
+        if not self.ProfileExists(Profile):
+            return False, [], [], False
+
+        with open(self.NameToFile(Profile), 'r') as f:
+            Lines = f.readlines()
+        ReadProfile = Lines.pop(0).strip()
+        if ReadProfile != Profile:
+            print(len(ReadProfile), len(Profile))
+            print(f"Corrupted profile ({ReadProfile} vs {Profile})")
+        MissingBook = False
+        ExistingBooks = CustomBookC.List()
+        for BookName in Lines:
+            if BookName not in ExistingBooks:
+                print(f'Missing book : {BookName}')
+                MissingBook = True
+                continue
+            Books[BookName] = CustomBookC(BookName)
+            BooksList.append(BookName)
+        return True, Books, BooksList, MissingBook
+
     @classmethod
     def ProfileExists(cls, Profile):
-        return Profile in cls.List()[0]
+        return Profile in cls.List()
     @classmethod
     def List(cls):
         Profiles = []
@@ -164,17 +187,13 @@ class LibraryHandlerC:
                 continue
             with open(cls.Folder + Filename, 'r') as f:
                 Profile = f.readlines()[0].strip()
-            if Profile[:len(cls._CurrentStr)] == cls._CurrentStr:
-                Profile = Profile[len(cls._CurrentStr):]
-                CurrentProfile = Profile
             Profiles.append(Profile)
-        return sorted(Profiles), CurrentProfile
+        return sorted(Profiles)
     @classmethod
-    def NewProfile(cls, Profile):
+    def CreateProfile(cls, Profile):
         print(f"Creating new library profile {Profile}")
         with open(cls.NameToFile(Profile), 'w') as f:
             f.writelines([Profile])
-        return Profile
     @classmethod
     def NameToFile(cls, Profile):
         Profile = re.sub(r'\W+', '', Profile)
@@ -182,19 +201,19 @@ class LibraryHandlerC:
     @classmethod
     def IsProfile(cls, Filename):
         return Filename[-len(cls._extension):] == cls._extension
+    @classmethod
+    def SaveProfile(cls, Profile, BooksList):
+        Data = [Profile]
+        for BookName in BooksList[1:]:
+            Data.append(BookName)
+        with open(cls.NameToFile(Profile), 'w') as f:
+            f.write('\n'.join(Data))
 
     def AddBook(self, Book):
         self.Books[Book.Name] = Book
         self.BooksList.append(Book.Name)
-        self.SaveCurrentProfile()
+        self.SaveProfile(self.Profile, self.BooksList)
         print(f"Added {Book} to profile {self.Profile}")
-
-    def SaveCurrentProfile(self):
-        Data = [f"{self._CurrentStr}{self.Profile}"]
-        for BookName in self.BooksList[1:]:
-            Data.append(f"{BookName}")
-        with open(self.NameToFile(self.Profile), 'w') as f:
-            f.write('\n'.join(Data))
 
     def IsWire(self, C): # Checks if class or class instance
         return C == self.Wire or isinstance(C, self.Wire)

@@ -17,7 +17,7 @@ from GUITools import ModesDict, ModeC, SFrame, SEntry, SLabel, SPinEntry, BoardI
 from Library import LibraryHandlerC
 import DefaultLibrary
 from Board import BoardC
-from Export import ExportGUI
+from ExternalGUIs import ExportGUI, LibraryGUI
 
 matplotlib.use("TkAgg")
 
@@ -308,7 +308,7 @@ class GUI:
             LogWarning("Component export failed")
 
     def ManageLibraries(self):
-        LibrarySession = LibraryGUI(self.MainWindow)
+        LibrarySession = LibraryGUI(self.MainWindow, self.LibraryHandler)
         LibrarySession.LibraryWindow.wait_window()
         self.UpdateLibrary()
 
@@ -667,6 +667,7 @@ class GUI:
         self.AddControlKey('n', lambda key, mod:self.Open(New=True), Mod = CTRL)
         self.AddControlKey('w', lambda key, mod:self.CloseBoard(), Mod = CTRL)
         self.AddControlKey('e', lambda key, mod:self.ExportBoardAsComponent(), Mod = CTRL)
+        self.AddControlKey('m', lambda key, mod:self.ManageLibraries(), Mod = CTRL)
 
     def TextFilter(self, Callback, Symbol, Modifier):
         #if self.MainWindow.focus_get() == self.MainFrame.Console.ConsoleInstance.text and not Symbol in ('escape', 'f4', 'f5', 'f6'): # Hardcoded so far, should be taken from Params as well
@@ -708,7 +709,7 @@ class GUI:
 
         LMenu = Tk.Menu(MainMenu, tearoff=0)
         AddCommand(LMenu, "Reload", self.UpdateLibrary)
-        AddCommand(LMenu, "Manage libraries", self.ManageLibraries)
+        AddCommand(LMenu, "Manage library", self.ManageLibraries)
         MainMenu.add_cascade(label="Library", menu=LMenu)
 
         HMenu = Tk.Menu(MainMenu, tearoff=0)

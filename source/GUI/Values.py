@@ -167,6 +167,13 @@ class Params:
 
             DefaultMargin = 5
             RefLineEvery = 20
+    class LibraryGUI:
+        Name = "LibraryManagement"
+        class Widths:
+            Profiles = 20
+            Books = 30
+            Components = 30
+        ListsHeight = 15
 
 Params.GUI.View.FigRatio = Params.GUI.View.FigSize[1] / Params.GUI.View.FigSize[0]
 Params.ExportGUI.View.FigRatio = Params.ExportGUI.View.FigSize[1] / Params.ExportGUI.View.FigSize[0]
